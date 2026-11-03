@@ -1,0 +1,24 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary / coverage
+*.test
+*.out
+*.coverprofile
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# CA certs
+cert/*.crt
