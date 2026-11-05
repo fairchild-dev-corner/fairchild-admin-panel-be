@@ -72,6 +72,15 @@ func (f fakeLedger) ListMembers(_ context.Context, branch, category, _ string, o
 }
 
 func (fakeLedger) FindMember(context.Context, string, int64) (*models.Member, error) { return nil, nil }
+func (fakeLedger) ListStatements(context.Context, string, int64) (*models.SOAList, error) {
+	return nil, nil
+}
+func (fakeLedger) FindStatement(context.Context, string, int64, int64) (*models.SOAStatement, error) {
+	return nil, nil
+}
+func (fakeLedger) FindStanding(context.Context, string, int64) (*models.ClientStanding, error) {
+	return nil, nil
+}
 
 func window(all []models.Member, offset, limit int) []models.Member {
 	if offset >= len(all) {

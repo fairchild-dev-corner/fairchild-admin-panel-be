@@ -21,7 +21,8 @@ const (
 	argon2KeyLen  = 32
 	argon2SaltLen = 16
 
-	// MinPasswordLength applies to new panel passwords (cmd/create_panel_user).
+	// MinPasswordLength applies to new panel passwords (cmd/create_panel_user
+	// and changing your own on My Account).
 	MinPasswordLength = 12
 )
 

@@ -35,4 +35,10 @@ type LedgerMembersRepositoryInterface interface {
 	ListMembers(ctx context.Context, branch, category, search string, offset, limit int) ([]models.Member, error)
 	// Returns nil, nil when the client isn't a current member.
 	FindMember(ctx context.Context, branch string, clientID int64) (*models.Member, error)
+	// The member's statements of account from the last SOAWindowMonths months.
+	ListStatements(ctx context.Context, branch string, clientID int64) (*models.SOAList, error)
+	// Returns nil, nil when the member has no statement with that CTRLNO.
+	FindStatement(ctx context.Context, branch string, clientID, ctrlNo int64) (*models.SOAStatement, error)
+	// The member's 12-month coop health score.
+	FindStanding(ctx context.Context, branch string, clientID int64) (*models.ClientStanding, error)
 }

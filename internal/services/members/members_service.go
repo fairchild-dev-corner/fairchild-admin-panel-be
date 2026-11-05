@@ -158,6 +158,52 @@ func (s *MembersService) GetMember(ctx context.Context, rawID string) (*models.M
 	return m, nil
 }
 
+// ledgerMember resolves a ledger id to a current member's branch and client
+// id. Panel members have no ledger accounts: ErrNotLedgerMember.
+func (s *MembersService) ledgerMember(ctx context.Context, rawID string) (string, int64, error) {
+	if _, err := s.GetMember(ctx, rawID); err != nil {
+		return "", 0, err
+	}
+	branch, clientID, ok := members_repo.ParseLedgerMemberID(rawID)
+	if !ok {
+		return "", 0, cc.ErrNotLedgerMember
+	}
+	return branch, clientID, nil
+}
+
+// ListStatements returns a ledger member's statements of account from the
+// last two months (or their latest one).
+func (s *MembersService) ListStatements(ctx context.Context, rawID string) (*models.SOAList, error) {
+	branch, clientID, err := s.ledgerMember(ctx, rawID)
+	if err != nil {
+		return nil, err
+	}
+	return s.ledger.ListStatements(ctx, branch, clientID)
+}
+
+func (s *MembersService) GetStatement(ctx context.Context, rawID string, ctrlNo int64) (*models.SOAStatement, error) {
+	branch, clientID, err := s.ledgerMember(ctx, rawID)
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := s.ledger.FindStatement(ctx, branch, clientID, ctrlNo)
+	if err != nil {
+		return nil, err
+	}
+	if stmt == nil {
+		return nil, cc.ErrStatementNotFound
+	}
+	return stmt, nil
+}
+
+func (s *MembersService) GetStanding(ctx context.Context, rawID string) (*models.ClientStanding, error) {
+	branch, clientID, err := s.ledgerMember(ctx, rawID)
+	if err != nil {
+		return nil, err
+	}
+	return s.ledger.FindStanding(ctx, branch, clientID)
+}
+
 func (s *MembersService) CreateMember(ctx context.Context, req *models.MemberRequest, actor audit_models.Actor) (*models.Member, error) {
 	if err := normalizeMember(req); err != nil {
 		return nil, err

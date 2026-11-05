@@ -203,3 +203,85 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 	}
 	return voters, rows.Err()
 }
+
+func (r *VotersRepository) GetElectionControl(ctx context.Context) (*models.ElectionControl, error) {
+	var c models.ElectionControl
+	var at time.Time
+	err := r.DB.QueryRowContext(ctx,
+		`SELECT enabled, COALESCE(updated_by_name, ''), updated_at FROM election_control WHERE id = 1`,
+	).Scan(&c.Enabled, &c.UpdatedBy, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The migration seeds the row; treat a missing one as off.
+		return &c, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.UpdatedAt = at.UTC().Format(time.RFC3339)
+	return &c, nil
+}
+
+// SetElectionControl turns the election on or off and audits it in the same
+// transaction.
+func (r *VotersRepository) SetElectionControl(ctx context.Context, enabled bool, byID int64, by string, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO election_control (id, enabled, updated_by_user_panel_id, updated_by_name) VALUES (1, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), updated_by_user_panel_id = VALUES(updated_by_user_panel_id),
+			                         updated_by_name = VALUES(updated_by_name), updated_at = NOW()`,
+			enabled, byID, by); err != nil {
+			return err
+		}
+		audit.Target = "election"
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+}
+
+// ClearMasterList empties the master list - every member becomes
+// non-voting - and audits it in the same transaction. The upload log is
+// kept. Returns how many members were on it.
+func (r *VotersRepository) ClearMasterList(ctx context.Context, audit *audit_models.AuditLog) (int64, error) {
+	var cleared int64
+	err := database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM voter_master_list`)
+		if err != nil {
+			return err
+		}
+		if cleared, err = res.RowsAffected(); err != nil {
+			return err
+		}
+		audit.Target = "master list"
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+	return cleared, err
+}
+
+// VoterStatuses reads every member's voting status with the keys needed to
+// find their ledger branch: live portal accounts, plus listed members whose
+// account was removed since (non-voting, no client id).
+func (r *VotersRepository) VoterStatuses(ctx context.Context) ([]models.VoterStatus, error) {
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT COALESCE(TRIM(u.member_id), ''), COALESCE(TRIM(u.user_client_id), ''),
+		        m.id IS NOT NULL AND u.status = 'active'
+		 FROM users u
+		 LEFT JOIN voter_master_list m ON m.user_id = u.id
+		 WHERE `+liveAccount+`
+		 UNION ALL
+		 SELECT m.member_no, '', FALSE
+		 FROM voter_master_list m
+		 LEFT JOIN users u ON u.id = m.user_id AND `+liveAccount+`
+		 WHERE u.id IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	statuses := make([]models.VoterStatus, 0, 16384)
+	for rows.Next() {
+		var v models.VoterStatus
+		if err := rows.Scan(&v.MemberNo, &v.ClientID, &v.CanVote); err != nil {
+			return nil, err
+		}
+		statuses = append(statuses, v)
+	}
+	return statuses, rows.Err()
+}

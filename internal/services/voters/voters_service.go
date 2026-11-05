@@ -5,20 +5,60 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	cc "fairchild-admin-panel-be/internal/constants"
 	interfaces "fairchild-admin-panel-be/internal/interfaces"
 	audit_models "fairchild-admin-panel-be/internal/models/audit"
+	member_models "fairchild-admin-panel-be/internal/models/members"
 	models "fairchild-admin-panel-be/internal/models/voters"
 )
 
 type VotersService struct {
-	repo interfaces.VotersRepositoryInterface
+	repo      interfaces.VotersRepositoryInterface
+	passwords interfaces.PasswordConfirmerInterface
+	branches  interfaces.BranchResolverInterface
 }
 
-func NewVotersService(repo interfaces.VotersRepositoryInterface) *VotersService {
-	return &VotersService{repo: repo}
+func NewVotersService(
+	repo interfaces.VotersRepositoryInterface,
+	passwords interfaces.PasswordConfirmerInterface,
+	branches interfaces.BranchResolverInterface,
+) *VotersService {
+	return &VotersService{repo: repo, passwords: passwords, branches: branches}
+}
+
+// Stats counts voting and non-voting members per ledger branch, matched the
+// same way as the Portal page. Members on no ledger count under NoBranch.
+func (s *VotersService) Stats(ctx context.Context) (*models.VoterStats, error) {
+	statuses, err := s.repo.VoterStatuses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	branchOf, err := s.branches.BranchResolver(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &models.VoterStats{Voting: map[string]int{}, NonVoting: map[string]int{}}
+	for _, b := range slices.Concat(member_models.Branches, []string{models.NoBranch}) {
+		stats.Voting[b], stats.NonVoting[b] = 0, 0
+	}
+	for _, v := range statuses {
+		branch, ok := branchOf(v.MemberNo, v.ClientID)
+		if !ok {
+			branch = models.NoBranch
+		}
+		if v.CanVote {
+			stats.Voting[branch]++
+			stats.TotalVoting++
+		} else {
+			stats.NonVoting[branch]++
+			stats.TotalNonVoting++
+		}
+	}
+	return stats, nil
 }
 
 func invalid(format string, args ...any) error {
@@ -29,9 +69,44 @@ func (s *VotersService) Summary(ctx context.Context) (*models.MasterListSummary,
 	return s.repo.Summary(ctx)
 }
 
+func (s *VotersService) ElectionControl(ctx context.Context) (*models.ElectionControl, error) {
+	return s.repo.GetElectionControl(ctx)
+}
+
+// SetElectionControl turns the election on or off once the admin's own
+// password checks out (a wrong one counts toward the login lockout).
+func (s *VotersService) SetElectionControl(ctx context.Context, req *models.SetElectionControlRequest, actor audit_models.Actor, userAgent string) (*models.ElectionControl, error) {
+	if err := s.passwords.ConfirmPassword(ctx, actor.UserPanelID, req.Password, actor.IP, userAgent); err != nil {
+		return nil, err
+	}
+	action := cc.AUDIT_TURNED_ELECTION_OFF
+	if *req.Enabled {
+		action = cc.AUDIT_TURNED_ELECTION_ON
+	}
+	if err := s.repo.SetElectionControl(ctx, *req.Enabled, actor.UserPanelID, actor.Name, actor.Log(action, "")); err != nil {
+		return nil, err
+	}
+	return s.repo.GetElectionControl(ctx)
+}
+
+// requireElectionOn: the master list only changes while the election is on.
+func (s *VotersService) requireElectionOn(ctx context.Context) error {
+	c, err := s.repo.GetElectionControl(ctx)
+	if err != nil {
+		return err
+	}
+	if !c.Enabled {
+		return cc.ErrElectionOff
+	}
+	return nil
+}
+
 // CheckMasterList reads an uploaded file and reports which members have a
 // portal account, without saving anything.
 func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, file io.Reader) (*models.MasterListCheck, error) {
+	if err := s.requireElectionOn(ctx); err != nil {
+		return nil, err
+	}
 	data, err := io.ReadAll(io.LimitReader(file, models.MaxMasterListBytes+1))
 	if err != nil {
 		return nil, err
@@ -70,6 +145,9 @@ func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, fi
 // They're matched to portal accounts again, so one removed since the check
 // is left out.
 func (s *VotersService) SaveMasterList(ctx context.Context, req *models.SaveMasterListRequest, actor audit_models.Actor) (*models.MasterListSummary, error) {
+	if err := s.requireElectionOn(ctx); err != nil {
+		return nil, err
+	}
 	if len(req.Members) == 0 {
 		return nil, invalid("The master list has no members with a portal account")
 	}
@@ -113,4 +191,20 @@ func (s *VotersService) List(ctx context.Context, q models.VoterListQuery) (*mod
 		return nil, err
 	}
 	return page, nil
+}
+
+// ResetMasterList empties the master list so every member is non-voting,
+// once the admin's own password checks out. Only while the election is on,
+// like uploading a new list.
+func (s *VotersService) ResetMasterList(ctx context.Context, req *models.ResetMasterListRequest, actor audit_models.Actor, userAgent string) (*models.MasterListSummary, error) {
+	if err := s.requireElectionOn(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.passwords.ConfirmPassword(ctx, actor.UserPanelID, req.Password, actor.IP, userAgent); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.ClearMasterList(ctx, actor.Log(cc.AUDIT_RESET_MASTER_LIST, "")); err != nil {
+		return nil, err
+	}
+	return s.repo.Summary(ctx)
 }

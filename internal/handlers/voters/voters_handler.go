@@ -30,14 +30,48 @@ func NewHandler(votersService *service.VotersService) *VotersHandler {
 }
 
 // RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can see who can vote and the current master list; uploading a new
-// list is admin-only.
+// staff can see who can vote, the current master list and whether the
+// election is on; uploading a new list (only while it's on) and turning it
+// on or off or resetting everyone to non-voting (both with the admin's
+// password) is admin-only.
 func (h *VotersHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	adminOnly := middlewares.RequireRole(cc.ROLE_ADMIN)
 	admin.GET("/voters", h.handleList)
 	admin.GET("/voters/master-list", h.handleSummary)
+	admin.GET("/voters/stats", h.handleStats)
 	admin.POST("/voters/master-list/check", adminOnly, h.handleCheck)
 	admin.PUT("/voters/master-list", adminOnly, h.handleSave)
+	admin.POST("/voters/master-list/reset", adminOnly, h.handleReset)
+	admin.GET("/election-control", h.handleGetControl)
+	admin.PUT("/election-control", adminOnly, h.handleSetControl)
+}
+
+// handleGetControl: GET /admin/election-control
+func (h *VotersHandler) handleGetControl(ctx *gin.Context) {
+	c, err := h.votersService.ElectionControl(ctx)
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, c)
+}
+
+// handleSetControl: PUT /admin/election-control {enabled, password}
+func (h *VotersHandler) handleSetControl(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	var req models.SetElectionControlRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	c, err := h.votersService.SetElectionControl(ctx, &req, actor, ctx.Request.UserAgent())
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, c)
 }
 
 // handleList: GET /admin/voters?status=all|eligible|ineligible&q=&page=&pageSize=
@@ -117,6 +151,13 @@ func writeVoterError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, cc.ErrMasterListInvalid):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusBadRequest)
+	// 403, not 401: the panel treats 401 as an expired session and signs out.
+	case errors.Is(err, cc.ErrPasswordIncorrect):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusForbidden)
+	case errors.Is(err, cc.ErrAccountTemporarilyLocked):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusTooManyRequests)
+	case errors.Is(err, cc.ErrElectionOff):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusConflict)
 	default:
 		loggers.GetCommonError(ctx, err.Error(), http.StatusInternalServerError)
 	}
@@ -127,4 +168,34 @@ func atoiOr(s string, fallback int) int {
 		return n
 	}
 	return fallback
+}
+
+// handleReset: POST /admin/voters/master-list/reset {password} - everyone
+// becomes non-voting.
+func (h *VotersHandler) handleReset(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	var req models.ResetMasterListRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	s, err := h.votersService.ResetMasterList(ctx, &req, actor, ctx.Request.UserAgent())
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, s)
+}
+
+// handleStats: GET /admin/voters/stats - voting and non-voting members per
+// branch.
+func (h *VotersHandler) handleStats(ctx *gin.Context) {
+	stats, err := h.votersService.Stats(ctx)
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, stats)
 }

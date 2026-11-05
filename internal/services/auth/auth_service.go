@@ -94,6 +94,35 @@ func (s *AuthService) Login(ctx context.Context, req *models.LoginRequest, clien
 	return tokens, nil
 }
 
+// ConfirmPassword re-checks a signed-in panel user's own password before a
+// sensitive action (e.g. turning the election on or off). It shares the
+// login lockout: a wrong password is recorded as a failed login, so repeated
+// guesses lock the account the same way.
+func (s *AuthService) ConfirmPassword(ctx context.Context, userID int64, password, ip, userAgent string) error {
+	user, err := s.repo.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil || user.Status != cc.USER_STATUS_ACTIVE {
+		return cc.ErrPasswordIncorrect
+	}
+	client := ClientInfo{IP: ip, UserAgent: userAgent}
+
+	byUsername, byIP, err := s.repo.CountRecentFailedLogins(ctx, user.Username, client.IP, lockoutWindow)
+	if err != nil {
+		return err
+	}
+	if byUsername >= maxFailedLogins || byIP >= maxFailedLogins {
+		return cc.ErrAccountTemporarilyLocked
+	}
+
+	if err := CheckPassword(user.PasswordHash, password); err != nil {
+		s.recordAttempt(ctx, &user.ID, user.Username, client, false, "wrong password (confirmation)")
+		return cc.ErrPasswordIncorrect
+	}
+	return nil
+}
+
 // Refresh redeems a refresh token (rotate-on-use): the presented session is
 // revoked and a brand-new pair is issued. The user's status is re-checked,
 // so suspending an account stops it at the next refresh at the latest.

@@ -112,3 +112,44 @@ type AccountRef struct {
 	Name     string
 	Status   string
 }
+
+// ElectionControl is GET /admin/election-control: whether the yearly
+// election period is on. While it's off the master list can't be uploaded.
+type ElectionControl struct {
+	Enabled   bool   `json:"enabled"`
+	UpdatedAt string `json:"updatedAt"`
+	UpdatedBy string `json:"updatedBy,omitempty"`
+}
+
+// SetElectionControlRequest is the body of PUT /admin/election-control; the
+// admin's own password confirms the change.
+type SetElectionControlRequest struct {
+	Enabled  *bool  `json:"enabled" validate:"required"`
+	Password string `json:"password" validate:"required"`
+}
+
+// ResetMasterListRequest is the body of POST /admin/voters/master-list/reset;
+// the admin's own password confirms it.
+type ResetMasterListRequest struct {
+	Password string `json:"password" validate:"required"`
+}
+
+// VoterStatus is the slice of a member needed to count voters by branch.
+type VoterStatus struct {
+	MemberNo string
+	ClientID string
+	CanVote  bool
+}
+
+// NoBranch is the key for members whose member number isn't on any branch
+// ledger (or whose account was removed since they were listed).
+const NoBranch = "none"
+
+// VoterStats is GET /admin/voters/stats: voting and non-voting members per
+// ledger branch (main, knowles, tiic, plus NoBranch), and the totals.
+type VoterStats struct {
+	Voting         map[string]int `json:"voting"`
+	NonVoting      map[string]int `json:"nonVoting"`
+	TotalVoting    int            `json:"totalVoting"`
+	TotalNonVoting int            `json:"totalNonVoting"`
+}

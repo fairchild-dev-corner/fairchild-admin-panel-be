@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	account_handler "fairchild-admin-panel-be/internal/handlers/account"
 	applications_handler "fairchild-admin-panel-be/internal/handlers/applications"
 	audit_handler "fairchild-admin-panel-be/internal/handlers/audit"
 	auth_handler "fairchild-admin-panel-be/internal/handlers/auth"
@@ -12,7 +13,6 @@ import (
 	claims_handler "fairchild-admin-panel-be/internal/handlers/claims"
 	contact_handler "fairchild-admin-panel-be/internal/handlers/contact"
 	dashboard_handler "fairchild-admin-panel-be/internal/handlers/dashboard"
-	elections_handler "fairchild-admin-panel-be/internal/handlers/elections"
 	health_handler "fairchild-admin-panel-be/internal/handlers/health"
 	locks_handler "fairchild-admin-panel-be/internal/handlers/locks"
 	members_handler "fairchild-admin-panel-be/internal/handlers/members"
@@ -22,6 +22,7 @@ import (
 	voters_handler "fairchild-admin-panel-be/internal/handlers/voters"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	models "fairchild-admin-panel-be/internal/models/config"
+	account_repo "fairchild-admin-panel-be/internal/repositories/account"
 	applications_repo "fairchild-admin-panel-be/internal/repositories/applications"
 	audit_repo "fairchild-admin-panel-be/internal/repositories/audit"
 	auth_repo "fairchild-admin-panel-be/internal/repositories/auth"
@@ -29,7 +30,6 @@ import (
 	claims_repo "fairchild-admin-panel-be/internal/repositories/claims"
 	contact_repo "fairchild-admin-panel-be/internal/repositories/contact"
 	dashboard_repo "fairchild-admin-panel-be/internal/repositories/dashboard"
-	elections_repo "fairchild-admin-panel-be/internal/repositories/elections"
 	locks_repo "fairchild-admin-panel-be/internal/repositories/locks"
 	members_repo "fairchild-admin-panel-be/internal/repositories/members"
 	metrics_repo "fairchild-admin-panel-be/internal/repositories/metrics"
@@ -37,6 +37,7 @@ import (
 	site_repo "fairchild-admin-panel-be/internal/repositories/site"
 	voters_repo "fairchild-admin-panel-be/internal/repositories/voters"
 	router "fairchild-admin-panel-be/internal/routes"
+	account_service "fairchild-admin-panel-be/internal/services/account"
 	applications_service "fairchild-admin-panel-be/internal/services/applications"
 	audit_service "fairchild-admin-panel-be/internal/services/audit"
 	auth_service "fairchild-admin-panel-be/internal/services/auth"
@@ -44,7 +45,6 @@ import (
 	claims_service "fairchild-admin-panel-be/internal/services/claims"
 	contact_service "fairchild-admin-panel-be/internal/services/contact"
 	dashboard_service "fairchild-admin-panel-be/internal/services/dashboard"
-	elections_service "fairchild-admin-panel-be/internal/services/elections"
 	health_service "fairchild-admin-panel-be/internal/services/health"
 	locks_service "fairchild-admin-panel-be/internal/services/locks"
 	members_service "fairchild-admin-panel-be/internal/services/members"
@@ -173,17 +173,10 @@ func (s *APIServer) Run() {
 	blastsService := blasts_service.NewBlastsService(blastsRepo, portalService, emailSender, smsSender, s.messagingConf.Blast)
 	blasts_handler.NewHandler(blastsService).RegisterRoutes(admin)
 
-	// elections: repo -> service -> handler (`elections` + positions +
-	// candidates; results from `election_votes`, which the member portal
-	// writes; candidates and voters from fairchild_be `users`)
-	electionsRepo := elections_repo.NewElectionsRepository(s.mysqlDB)
-	electionsService := elections_service.NewElectionsService(electionsRepo)
-	elections_handler.NewHandler(electionsService).RegisterRoutes(admin)
-
 	// voters: repo -> service -> handler (`voter_master_list`, uploaded from
 	// Excel; Members List = fairchild_be `users` joined with it)
 	votersRepo := voters_repo.NewVotersRepository(s.mysqlDB)
-	votersService := voters_service.NewVotersService(votersRepo)
+	votersService := voters_service.NewVotersService(votersRepo, authService, portalService)
 	voters_handler.NewHandler(votersService).RegisterRoutes(admin)
 
 	// site: repo -> service -> handler (maintenance mode, admin + public)
@@ -208,6 +201,12 @@ func (s *APIServer) Run() {
 	auditRepo := audit_repo.NewAuditRepository(s.mysqlDB)
 	auditService := audit_service.NewAuditService(auditRepo)
 	audit_handler.NewHandler(auditService).RegisterRoutes(admin)
+
+	// account: repo -> service -> handler (the signed-in panel user's own
+	// profile, sessions, sign-ins and actions; read only)
+	accountRepo := account_repo.NewAccountRepository(s.mysqlDB)
+	accountService := account_service.NewAccountService(accountRepo, authService)
+	account_handler.NewHandler(accountService).RegisterRoutes(admin)
 
 	addr := fmt.Sprintf(":%s", s.hostConf.Port)
 	if err := s.server.Run(addr); err != nil {

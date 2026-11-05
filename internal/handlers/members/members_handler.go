@@ -128,3 +128,38 @@ func (h *MembersHandler) handleDeleteMember(ctx *gin.Context) {
 	}
 	loggers.SuccessResponse(ctx, nil)
 }
+
+// handleListStatements: GET /admin/members/:id/soa
+func (h *MembersHandler) handleListStatements(ctx *gin.Context) {
+	list, err := h.membersService.ListStatements(ctx, ctx.Param("id"))
+	if err != nil {
+		writeMemberError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, list)
+}
+
+// handleGetStatement: GET /admin/members/:id/soa/:ctrlNo
+func (h *MembersHandler) handleGetStatement(ctx *gin.Context) {
+	ctrlNo, err := strconv.ParseInt(ctx.Param("ctrlNo"), 10, 64)
+	if err != nil || ctrlNo <= 0 {
+		writeMemberError(ctx, cc.ErrStatementNotFound)
+		return
+	}
+	stmt, err := h.membersService.GetStatement(ctx, ctx.Param("id"), ctrlNo)
+	if err != nil {
+		writeMemberError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, stmt)
+}
+
+// handleGetStanding: GET /admin/members/:id/standing
+func (h *MembersHandler) handleGetStanding(ctx *gin.Context) {
+	standing, err := h.membersService.GetStanding(ctx, ctx.Param("id"))
+	if err != nil {
+		writeMemberError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, standing)
+}

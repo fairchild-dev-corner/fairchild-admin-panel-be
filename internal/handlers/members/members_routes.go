@@ -29,13 +29,19 @@ func (h *MembersHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/members/:id", h.handleGetMember)
 	admin.PUT("/members/:id", h.handleUpdateMember)
 	admin.DELETE("/members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleDeleteMember)
+	// Read-only views of a ledger member's accounts.
+	admin.GET("/members/:id/soa", h.handleListStatements)
+	admin.GET("/members/:id/soa/:ctrlNo", h.handleGetStatement)
+	admin.GET("/members/:id/standing", h.handleGetStanding)
 }
 
 func writeMemberError(ctx *gin.Context, err error) {
 	switch {
-	case errors.Is(err, cc.ErrMemberNotFound):
+	case errors.Is(err, cc.ErrMemberNotFound),
+		errors.Is(err, cc.ErrStatementNotFound):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusNotFound)
-	case errors.Is(err, cc.ErrLedgerMemberReadOnly):
+	case errors.Is(err, cc.ErrLedgerMemberReadOnly),
+		errors.Is(err, cc.ErrNotLedgerMember):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusForbidden)
 	case errors.Is(err, cc.ErrInvalidPayload),
 		errors.Is(err, cc.ErrDateOfBirthInFuture),

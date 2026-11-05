@@ -29,7 +29,6 @@ const (
 	ACCOUNT_CLAIM_ID_PREFIX          = "CR-"
 	LOCKED_ACCOUNT_ID_PREFIX         = "LK-"
 	MESSAGE_BLAST_ID_PREFIX          = "MB-"
-	ELECTION_ID_PREFIX               = "EL-"
 	CONTACT_MESSAGE_ID_PREFIX        = "CM-"
 	CONTACT_REPLY_ID_PREFIX          = "RP-"
 

@@ -24,6 +24,8 @@ const (
 	// Members / manual membership requests
 	MEMBER_NOT_FOUND         = "Member not found"
 	LEDGER_MEMBER_READ_ONLY  = "This member's record is managed in the branch's accounting system and can't be changed here"
+	NOT_A_LEDGER_MEMBER      = "Statements of account and client standing are only available for branch ledger members"
+	STATEMENT_NOT_FOUND      = "Statement not found"
 	PORTAL_MEMBER_NOT_FOUND  = "Portal account not found"
 	PORTAL_EMAIL_TAKEN       = "That email address is already used by another portal account"
 	PORTAL_ACCOUNT_EXISTS    = "This member number already has a portal account"
@@ -47,13 +49,12 @@ const (
 	// Recorded on recipients that were never sent.
 	BLAST_SKIPPED_TEST_MODE   = "Test mode: not on BLAST_TEST_RECIPIENTS"
 	BLAST_SKIPPED_CANCELLED   = "Blast cancelled before this was sent"
-	ELECTION_NOT_FOUND        = "Election not found"
-	ELECTION_LOCKED           = "Voting has started, so this election can't be changed or unpublished"
-	ELECTION_NOT_DRAFT        = "Only a draft election can be published or deleted"
-	ELECTION_NOT_PUBLISHED    = "This election isn't published"
-	INVALID_ELECTION_FILTER   = "status must be one of: draft, upcoming, open, closed"
 	INVALID_VOTER_FILTER      = "status must be all, eligible or ineligible"
 	MASTER_LIST_NO_FILE       = "Choose an Excel (.xlsx) or CSV file to upload"
+	PASSWORD_INCORRECT        = "That password is incorrect"
+	PASSWORD_TOO_SHORT        = "Use at least 12 characters for your new password"
+	PASSWORD_UNCHANGED        = "Choose a password different from your current one"
+	ELECTION_OFF              = "The election is turned off. An administrator must turn it on in Election > Controller first"
 	DATE_OF_BIRTH_IN_FUTURE   = "Date of birth can't be in the future"
 	JOINED_AT_IN_FUTURE       = "Membership date can't be in the future"
 	INVALID_MOBILE_NUMBER     = "Enter a valid PH mobile number, e.g. 0908 112 2689"
@@ -103,6 +104,18 @@ var ErrAccountSuspended = errors.New(ACCOUNT_SUSPENDED)
 // ErrAccountTemporarilyLocked is returned when the username or source IP has
 // too many recent failed logins (see AuthService.Login).
 var ErrAccountTemporarilyLocked = errors.New(ACCOUNT_TEMPORARILY_LOCKED)
+
+// ErrPasswordIncorrect: a signed-in user re-entered the wrong password to
+// confirm a sensitive action.
+var ErrPasswordIncorrect = errors.New(PASSWORD_INCORRECT)
+
+// ErrPasswordTooShort / ErrPasswordUnchanged: a new panel password must be
+// at least auth.MinPasswordLength characters and differ from the old one.
+var ErrPasswordTooShort = errors.New(PASSWORD_TOO_SHORT)
+var ErrPasswordUnchanged = errors.New(PASSWORD_UNCHANGED)
+
+// ErrElectionOff: the master list can only change while the election is on.
+var ErrElectionOff = errors.New(ELECTION_OFF)
 
 // ErrInvalidRefreshToken covers missing, unknown, revoked, expired and
 // already-rotated refresh tokens, and refresh for a no-longer-active user.
@@ -188,31 +201,6 @@ func (e *BlastInputError) Error() string { return e.Msg }
 
 func (e *BlastInputError) Is(target error) bool { return target == ErrBlastInvalid }
 
-// ErrElectionNotFound also covers a malformed election id.
-var ErrElectionNotFound = errors.New(ELECTION_NOT_FOUND)
-
-// ErrElectionLocked: once voting has started an election can't be edited or
-// unpublished - votes may already exist.
-var ErrElectionLocked = errors.New(ELECTION_LOCKED)
-
-// ErrElectionNotDraft: publishing and deleting need a draft.
-var ErrElectionNotDraft = errors.New(ELECTION_NOT_DRAFT)
-
-// ErrElectionNotPublished: unpublishing needs a published election.
-var ErrElectionNotPublished = errors.New(ELECTION_NOT_PUBLISHED)
-
-// ErrElectionInvalid is matched (via errors.Is) by every ElectionInputError -
-// details, positions or candidates the admin needs to fix.
-var ErrElectionInvalid = errors.New("invalid election")
-
-type ElectionInputError struct {
-	Msg string
-}
-
-func (e *ElectionInputError) Error() string { return e.Msg }
-
-func (e *ElectionInputError) Is(target error) bool { return target == ErrElectionInvalid }
-
 // ErrMasterListInvalid is matched (via errors.Is) by every
 // MasterListInputError - an upload the admin needs to fix (wrong file type,
 // no "Member ID" column, too big, nobody with a portal account).
@@ -229,6 +217,13 @@ func (e *MasterListInputError) Is(target error) bool { return target == ErrMaste
 // ErrLedgerMemberReadOnly is returned for an update or delete of a branch
 // ledger member - those records belong to the accounting system.
 var ErrLedgerMemberReadOnly = errors.New(LEDGER_MEMBER_READ_ONLY)
+
+// ErrNotLedgerMember is returned when SOA or client standing is asked for a
+// member added in the panel: only ledger members have accounts.
+var ErrNotLedgerMember = errors.New(NOT_A_LEDGER_MEMBER)
+
+// ErrStatementNotFound also covers a CTRLNO belonging to another member.
+var ErrStatementNotFound = errors.New(STATEMENT_NOT_FOUND)
 
 // Validation failures beyond what struct tags can express. Handlers answer
 // all of them with 400 and the message as-is.
