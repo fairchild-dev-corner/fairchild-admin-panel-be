@@ -53,6 +53,23 @@ type Config struct {
 	// Health page - comma-separated name=url pairs probed by GET /admin/health,
 	// e.g. "fairchild_be API=http://localhost:8080/api/v1/".
 	HealthCheckURLs string
+
+	// Contact message replies - the same keys and providers fairchild_be
+	// uses for OTPs. Either channel may be left unset, which disables it.
+	SMTPHost          string
+	SMTPPort          string
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
+	MoviderAPIKey     string
+	MoviderAPISecret  string
+	MoviderSenderName string
+
+	// SMS/email blasts. Outside a prod build only BLAST_TEST_RECIPIENTS
+	// (comma-separated emails and mobile numbers) are actually messaged.
+	BlastTestRecipients  string
+	BlastEmailsPerMinute string
+	BlastSMSPerMinute    string
 }
 
 /*Create Singleton*/
@@ -103,6 +120,19 @@ func initConfig() Config {
 		AdminRefreshTTLHours:     getEnv("ADMIN_REFRESH_TTL_HOURS", ""),
 
 		HealthCheckURLs: getEnv("HEALTH_CHECK_URLS", ""),
+
+		SMTPHost:          getEnv("SMTP_HOST", ""),
+		SMTPPort:          getEnv("SMTP_PORT", "587"),
+		SMTPUsername:      getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:          getEnv("SMTP_FROM", ""),
+		MoviderAPIKey:     getEnv("MOVIDER_API_KEY", ""),
+		MoviderAPISecret:  getEnv("MOVIDER_API_SECRET", ""),
+		MoviderSenderName: getEnv("MOVIDER_SENDER_NAME", ""),
+
+		BlastTestRecipients:  getEnv("BLAST_TEST_RECIPIENTS", ""),
+		BlastEmailsPerMinute: getEnv("BLAST_EMAILS_PER_MINUTE", "30"),
+		BlastSMSPerMinute:    getEnv("BLAST_SMS_PER_MINUTE", "60"),
 	}
 }
 

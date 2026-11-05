@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	models "fairchild-admin-panel-be/internal/models/dashboard"
@@ -55,11 +57,17 @@ func (r *DashboardRepository) CountCentral(ctx context.Context, monthStart time.
 // of the loan's sldtl SLE_CODE = 11 entries, active when > 0. sldtl is
 // aggregated before touching `loan` so a duplicated loan row can't double
 // a balance.
+//
+// FORCE INDEX (PRIMARY): left alone, MySQL picks SLDTL_SLE and does a row
+// lookup for every SLE_CODE = 11 entry; reading the clustered primary key
+// once in order is ~2.7x faster (5.5s vs 15s on the main ledger's 3.8M rows)
+// and its (branch, client, class, type, ref) prefix already matches the
+// GROUP BY. Every ledger's sldtl has this primary key.
 const activeLoanTotalsQuery = `
 SELECT COUNT(*), COALESCE(SUM(b.balance), 0)
 FROM (
     SELECT s.SL_BRCODE, s.SL_CLIENTID, s.REF_NO, s.SLT_CODE, SUM(s.AMT) AS balance
-    FROM sldtl s
+    FROM sldtl s FORCE INDEX (PRIMARY)
     WHERE s.SLC_CODE = 12 AND s.SLE_CODE = 11
     GROUP BY s.SL_BRCODE, s.SL_CLIENTID, s.REF_NO, s.SLT_CODE
     HAVING balance > 0
@@ -70,18 +78,32 @@ WHERE EXISTS (
       AND l.LoanREF_NO = b.REF_NO AND l.LoanSLC_CODE = 12 AND l.LoanSLT_CODE = b.SLT_CODE
 )`
 
+// SumActiveLoans queries every branch ledger at once (each is its own DB), so
+// it takes as long as the slowest branch rather than all of them in a row.
 func (r *DashboardRepository) SumActiveLoans(ctx context.Context) (*models.LoanTotals, error) {
-	var total models.LoanTotals
+	codes := r.BranchDBs.Codes()
+	results := make([]models.LoanTotals, len(codes))
+	errs := make([]error, len(codes))
 
-	for _, code := range r.BranchDBs.Codes() {
-		var count int
-		var balance float64
-		if err := r.BranchDBs[code].QueryRowContext(ctx, activeLoanTotalsQuery).Scan(&count, &balance); err != nil {
-			return nil, fmt.Errorf("active loan totals for branch %q: %w", code, err)
-		}
-		total.Count += count
-		total.Balance += balance
+	var wg sync.WaitGroup
+	for i, code := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := r.BranchDBs[code].QueryRowContext(ctx, activeLoanTotalsQuery).Scan(&results[i].Count, &results[i].Balance); err != nil {
+				errs[i] = fmt.Errorf("active loan totals for branch %q: %w", code, err)
+			}
+		}()
 	}
+	wg.Wait()
 
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	var total models.LoanTotals
+	for _, t := range results {
+		total.Count += t.Count
+		total.Balance += t.Balance
+	}
 	return &total, nil
 }

@@ -45,6 +45,19 @@ func main() {
 		panic(cc.UNINITIALIZED_PANIC_STATE)
 	}
 
+	// Optional: a channel left unconfigured only disables that kind of
+	// contact message reply.
+	messagingConf := conf.GetMessagingConfig(BuildEnv)
+	if messagingConf.SMTP == nil {
+		slog.Warn("SMTP not configured - email replies to contact messages are disabled")
+	}
+	if messagingConf.Movider == nil {
+		slog.Warn("Movider not configured - text replies to contact messages are disabled")
+	}
+	if messagingConf.Blast.TestMode {
+		slog.Warn("blasts are in test mode - only BLAST_TEST_RECIPIENTS are messaged", "allowed", len(messagingConf.Blast.TestRecipients))
+	}
+
 	/*** Initialize MySQL Connector (central Auth DB) ***/
 	mysqlDB, mysqlErr := database.MySQLInitConnector(mysqlConf, false)
 	if mysqlErr != nil {
@@ -66,5 +79,5 @@ func main() {
 	defer branchDBs.Close()
 
 	// Connect Server
-	conf.ServerConfig(hostConf, mysqlDB, branchDBs, jwtConf, healthTargets)
+	conf.ServerConfig(hostConf, mysqlDB, branchDBs, jwtConf, healthTargets, messagingConf)
 }

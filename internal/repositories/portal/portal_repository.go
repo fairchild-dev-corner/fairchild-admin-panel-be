@@ -36,14 +36,21 @@ func NewPortalRepository(db *sql.DB) *PortalRepository {
 }
 
 const portalSelect = `
-SELECT u.id, COALESCE(u.member_id, ''), COALESCE(u.user_client_id, ''), COALESCE(u.username, ''),
+SELECT u.id, COALESCE(u.member_id, ''), COALESCE(u.user_client_id, ''),
        COALESCE(u.first_name, ''), COALESCE(u.last_name, ''), COALESCE(u.middle_name, ''), COALESCE(u.suffix, ''),
        u.date_of_birth, COALESCE(u.gender, ''), COALESCE(u.nationality, ''),
        COALESCE(u.email, ''), u.email_verified_at IS NOT NULL, COALESCE(u.mobile_number, ''),
        COALESCE(NULLIF(TRIM(u.address), ''), NULLIF(TRIM(u.location), ''), ''),
        u.member_type, u.status, u.membership_date, u.created_at,
-       COALESCE(u.guardian_full_name, ''), COALESCE(u.guardian_mobile_number, '')
+       COALESCE(u.guardian_full_name, ''), COALESCE(u.guardian_mobile_number, ''),
+       (SELECT c.last_login_at FROM user_account_cred c WHERE c.user_id = u.id),
+       (SELECT COALESCE(s.ip_address, '') FROM auth_sessions s WHERE s.user_id = u.id ORDER BY s.id DESC LIMIT 1)
 FROM users u`
+
+// The last login is user_account_cred.last_login_at, which fairchild_be sets
+// on every kind of sign-in (password + OTP, social, SSO). Its IP comes from
+// the newest auth_sessions row, which a token refresh also creates, so it's
+// the IP the member was last active from.
 
 // liveWhere excludes removed accounts.
 const liveWhere = `u.status <> 'deleted' AND u.deleted_at IS NULL`
@@ -57,15 +64,18 @@ func scanPortalMember(row interface{ Scan(...any) error }) (*models.PortalMember
 	var id int64
 	var dob, joined sql.NullTime
 	var registered time.Time
+	var lastLogin sql.NullTime
+	var lastIP sql.NullString
 
 	if err := row.Scan(
-		&id, &m.MemberNo, &m.ClientID, &m.Username,
+		&id, &m.MemberNo, &m.ClientID,
 		&m.FirstName, &m.LastName, &m.MiddleName, &m.Suffix,
 		&dob, &m.Gender, &m.Nationality,
 		&m.Email, &m.EmailVerified, &m.MobileNumber,
 		&m.Address,
 		&m.MemberType, &m.Status, &joined, &registered,
 		&m.GuardianFullName, &m.GuardianMobileNumber,
+		&lastLogin, &lastIP,
 	); err != nil {
 		return nil, err
 	}
@@ -78,19 +88,23 @@ func scanPortalMember(row interface{ Scan(...any) error }) (*models.PortalMember
 		m.JoinedAt = joined.Time.Format(time.DateOnly)
 	}
 	m.RegisteredAt = registered.UTC().Format(time.RFC3339)
+	if lastLogin.Valid {
+		m.LastLoginAt = lastLogin.Time.UTC().Format(time.RFC3339)
+	}
+	m.LastLoginIP = lastIP.String
 	return &m, nil
 }
 
-// searchWhere matches a substring of the name, username, email or mobile,
-// the member number, or the account id ("PU-00012" or "12").
+// searchWhere matches a substring of the name, email or mobile, the member
+// number, or the account id ("PU-00012" or "12").
 func searchWhere(search string) (string, []any) {
 	like := "%" + utils.EscapeLike(search) + "%"
 	searchID, _ := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, search)
 	return `(? = '' OR u.id = ? OR u.member_id = ?
 	        OR CONCAT_WS(' ', u.first_name, u.middle_name, u.last_name, u.suffix) LIKE ?
 	        OR CONCAT_WS(' ', u.last_name, u.first_name) LIKE ?
-	        OR u.username LIKE ? OR u.email LIKE ? OR u.mobile_number LIKE ?)`,
-		[]any{search, searchID, search, like, like, like, like, like}
+	        OR u.email LIKE ? OR u.mobile_number LIKE ?)`,
+		[]any{search, searchID, search, like, like, like, like}
 }
 
 func (r *PortalRepository) ListKeys(ctx context.Context, search string) ([]models.PortalKey, error) {

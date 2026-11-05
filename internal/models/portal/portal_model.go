@@ -9,12 +9,12 @@ var Statuses = []string{"active", "pending_review", "inactive", "suspended"}
 
 // PortalMember matches PortalMember in the admin panel (src/models/admin.ts):
 // one fairchild_be `users` row (a member's portal account), plus what its
-// branch ledger record adds. Dates are YYYY-MM-DD; RegisteredAt is RFC 3339.
+// branch ledger record adds. Dates are YYYY-MM-DD; RegisteredAt and
+// LastLoginAt are RFC 3339.
 type PortalMember struct {
 	ID            string `json:"id"`
 	MemberNo      string `json:"memberNo,omitempty"`
 	ClientID      string `json:"clientId,omitempty"`
-	Username      string `json:"username,omitempty"`
 	FirstName     string `json:"firstName"`
 	LastName      string `json:"lastName"`
 	MiddleName    string `json:"middleName,omitempty"`
@@ -30,6 +30,8 @@ type PortalMember struct {
 	Status        string `json:"status"`
 	JoinedAt      string `json:"joinedAt,omitempty"`
 	RegisteredAt  string `json:"registeredAt"`
+	LastLoginAt   string `json:"lastLoginAt,omitempty"`
+	LastLoginIP   string `json:"lastLoginIp,omitempty"`
 
 	GuardianFullName     string `json:"guardianFullName,omitempty"`
 	GuardianMobileNumber string `json:"guardianMobileNumber,omitempty"`

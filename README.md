@@ -40,11 +40,56 @@ make run-dev                  # http://localhost:8081
 | `DELETE /admin/members/:id` (panel members only; soft delete) | **admin only** |
 | `GET /admin/portal-members?status=&branches=&q=&page=&pageSize=`, `GET /admin/portal-members/:id` | admin, staff |
 | `GET /admin/portal-lookup?memberNo=`, `POST /admin/portal-members` (add a ledger member), `PUT /admin/portal-members/:id` `{email, mobileNumber}`, `DELETE /admin/portal-members/:id` | **admin only** |
+| `GET /admin/account-claims?status=&q=&page=&pageSize=`, `GET /admin/account-claims/:id` | admin, staff |
+| `PUT /admin/account-claims/:id/approve` (puts the requested email/mobile on the matching portal account, then emails and texts the member on them; returns `{claim, notifications}`), `PUT /admin/account-claims/:id/reject` `{reason}` | **admin only** |
+| `GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=` (login locks; `status` is `locked` or `unlocked`; `month` is `YYYY-MM` or `year` is `YYYY`, otherwise the last 3 months; dates are the lock date on `locked` and the unlock date on `unlocked`) | admin, staff |
+| `PUT /admin/locked-accounts/:id/unlock` (then emails and texts the member when the member ID has a portal account; the response says what was sent) | **admin only** |
+| `GET /admin/contact-messages?status=unreplied\|replied&q=&page=&pageSize=`, `GET /admin/contact-messages/:id` | admin, staff |
+| `POST /admin/contact-messages/:id/replies` `{channel: email\|sms, body}` (emails the sender, or texts the portal account with the same email) | **admin only** |
+| `GET /admin/blasts?page=&pageSize=`, `GET /admin/blasts/:id` (with up to 100 undelivered messages) | admin, staff |
+| `POST /admin/blasts/preview` `{channel, statuses, branches}`, `POST /admin/blasts/test` `{channel, subject, emailBody, smsBody, email, mobile}`, `POST /admin/blasts` `{channel, statuses, branches, subject, emailBody, smsBody}`, `PUT /admin/blasts/:id/cancel` | **admin only** |
+| `GET /admin/elections?status=&page=&pageSize=`, `GET /admin/elections/:id` (positions, candidates, votes, turnout) | admin, staff |
+| `GET /admin/elections/candidate-lookup?memberNo=`, `POST /admin/elections`, `PUT /admin/elections/:id` `{title, description, startsAt, endsAt, positions: [{title, seats, candidates: [{memberNo, bio}]}]}`, `PUT /admin/elections/:id/publish`, `PUT /admin/elections/:id/unpublish`, `DELETE /admin/elections/:id` | **admin only** |
+| `GET /admin/voters?status=&q=&page=&pageSize=` (`status`: `all` (default), `eligible` = voting, `ineligible` = non-voting), `GET /admin/voters/master-list` (current list + last upload) | admin, staff |
+| `POST /admin/voters/master-list/check` (multipart `file`: .xlsx or .csv; nothing saved), `PUT /admin/voters/master-list` `{fileName, members: [{memberNo, name}]}` | **admin only** |
 | `GET /admin/site-status` | admin, staff |
 | `PUT /admin/site-status` | **admin only** |
 | `GET /admin/health`, `GET /admin/metrics`, `GET /admin/audit-log` | admin, staff |
 
-Application ids are accepted as `LA-01040` / `MA-00560` or the bare number, member ids as `FC20310` or `20310`.
+Application ids are accepted as `LA-01040` / `MA-00560` or the bare number, member ids as `FC20310` or `20310`, claim ids as `CR-00012` or `12`, lock ids as `LK-00012` or `12`, contact message ids as `CM-00012` or `12`, blast ids as `MB-00012` or `12`, election ids as `EL-00012` or `12`.
+
+### Elections
+
+An election has a title, description, voting window (`startsAt`/`endsAt`), and positions, each with a number of seats and candidates. A candidate is an **active** portal member, picked by member number; their name comes from their `users` row. A member **can vote** (is "voting") when they're on the voters' master list and their portal account is active. The admin panel has no page for elections themselves (the Election menu has Members List and Generate Master List); they're managed through these endpoints.
+
+- **Status** is derived, never stored: `draft` (not published), `upcoming` (published, voting hasn't started), `open`, `closed`.
+- A save replaces the positions and candidates. Drafts and upcoming elections can be edited; once voting starts an election is locked (it can't be edited or unpublished). Publishing needs a start in the future, a master list, and at least one candidate for every position; an upcoming election must stay that way when edited. Only drafts can be deleted.
+- Results are vote counts per candidate from `election_votes`, and turnout is members with at least one vote over members who can vote.
+
+### Voters' master list
+
+One list shared by every election (`voter_master_list`), uploaded on the Generate Master List page; each upload replaces it and is logged in `voter_master_list_uploads`.
+
+- **Upload:** an Excel `.xlsx` (first worksheet) or CSV with a "Member ID" column (also matched: "Member No.", "ID No.", "Membership No.") and an optional "Name" column, with the header in the first 10 rows. `check` reads it and matches each ID to a live portal account, case-insensitively; an ID Excel stored as a number ("696" for "000696") matches by its digits when that's unambiguous. It returns the matched members, the IDs with no portal account (`notFound`, left out), repeats and blank rows. The admin confirms, and `PUT` matches the IDs again and replaces the whole list. Up to 50,000 rows and 5 MB.
+- **Members List** (`GET /admin/voters`) is every live portal account (fairchild_be `users`) joined with the list, plus listed members whose account was removed since: voting or non-voting, and why not (`not_listed`, `account_inactive`, `no_account`). It works with or without any election.
+
+### SMS/email blasts
+
+One message to many portal members (events, notices), over the same SMTP/Movider setup as contact replies.
+
+- **Audience:** live `users` rows with the chosen statuses (Active by default), optionally only those on chosen branches (matched through the Portal page's ledger index). A member gets one message per channel ("both" = an email and a text); members with no usable address are left out, and an address shared by several accounts (a guardian's number) gets one message. Texts go to the account's mobile, or a Young Saver's guardian's.
+- **`{name}`** in the subject, email or text is replaced with the member's first name.
+- **Sending:** creating a blast stores every recipient in `message_blast_recipients` and returns at once. A background worker in each server instance claims 50 at a time (`FOR UPDATE SKIP LOCKED`, so instances never double-send) and paces each channel: `BLAST_EMAILS_PER_MINUTE` (default 30) and `BLAST_SMS_PER_MINUTE` (default 60). Each message's outcome and provider error are recorded. A blast left sending when the server stopped is resumed on start; a claim older than 15 minutes is retried.
+- **Cancel** skips every message not yet sent.
+- **Test mode (any build but prod):** only addresses in `BLAST_TEST_RECIPIENTS` (comma-separated emails and mobile numbers) are actually messaged; every other recipient is recorded as skipped. This keeps dev and staging, whose databases hold real members' contacts, from messaging members. `POST /admin/blasts/test` always sends, to the address the admin types.
+
+### Contact message replies
+
+Replies go out over the same providers fairchild_be uses for OTPs, configured with the same `.env` keys: **SMTP** (`SMTP_HOST`, `SMTP_PORT` (default 587, STARTTLS), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`) for email, and **Movider** (`MOVIDER_API_KEY`, `MOVIDER_API_SECRET`, optional `MOVIDER_SENDER_NAME`) for SMS. Each channel is optional: one with missing keys is disabled, logged at startup, and reported to the panel as `channels` in the list response.
+
+- An email goes to the address on the message, using the FCCMPC email layout with the original message quoted.
+- A text goes to the mobile number of the portal account (`users`) with the same email, or a Young Saver's guardian's number, normalized to E.164. It is prefixed `FCCMPC:` and capped at 480 characters.
+- A reply is recorded only after the provider accepts it. A provider failure answers 424. If a reply was sent but couldn't be recorded, the endpoint answers 409 so the admin doesn't send it twice.
 
 ### Members
 
@@ -67,7 +112,12 @@ Each page lists panel members first (newest first), then each selected branch's 
 | `loan_applications` | this service | online loan applications awaiting review |
 | `membership_application_reviews` | this service | who/when/why for reviews of fairchild_be's `membership_applications` |
 | `admin_members` | this service | members managed from the panel's Members page; deletes set `deleted_at` |
-| `users`, `membership_applications` | fairchild_be | read only, except: `membership_applications.status` (reviews); inserting pending rows for requests staff enter manually (`POST /admin/membership-applications`); and from the Portal page: adding an account for a ledger member (a `users` row copied from the ledger + a `user_account_cred` row with no password, like migrated accounts), changing `email`/`mobile_number`, or removing an account (`status = 'deleted'`, `deleted_at`, its `auth_sessions` revoked) |
+| `contact_message_replies` | this service | replies sent to fairchild_be's `contact_messages` (channel, recipient, body, sender); a message with a reply counts as replied |
+| `message_blasts`, `message_blast_recipients` | this service | SMS/email blasts and one row per message (recipient, status, provider error), snapshotted when the blast is created |
+| `elections`, `election_positions`, `election_candidates` | this service | elections set up from the Election page |
+| `election_votes` | this service | one row per candidate a member voted for; written by the member portal (not built yet), only read here |
+| `voter_master_list`, `voter_master_list_uploads` | this service | the voters' master list (portal account + member number, and the name as written in the uploaded file), replaced on every upload, and a log of uploads (file, count, who, when) |
+| `users`, `membership_applications`, `account_claim_requests`, `locked_member_accounts`, `contact_messages` | fairchild_be | read only (`contact_messages` always), except: `membership_applications.status` (reviews); inserting pending rows for requests staff enter manually (`POST /admin/membership-applications`); from the Portal page: adding an account for a ledger member (a `users` row copied from the ledger + a `user_account_cred` row with no password, like migrated accounts), changing `email`/`mobile_number`, or removing an account (`status = 'deleted'`, `deleted_at`, its `auth_sessions` revoked); and from the Claim Accounts page: reviewing a claim (`status`, `rejection_reason`, `reviewed_at`), where approving also sets the matching account's `email`/`mobile_number` in the same transaction. The reviewer is read back from `admin_audit_logs`. From the Locked Accounts page: unlocking a member ID (`is_locked = FALSE`, `unlocked_at` on its active `locked_member_accounts` rows; the rows stay as history). |
 
 Migration history is tracked in **`admin_panel_schema_migrations`**, not `schema_migrations`, so it never collides with fairchild_be's migrations on the same DB.
 
@@ -82,13 +132,19 @@ Migration history is tracked in **`admin_panel_schema_migrations`**, not `schema
 
 ## Known gaps
 
+- **Members can't vote yet.** Nothing writes `election_votes`: fairchild_be needs member endpoints (list open elections the member is on the master list of, cast a ballot of up to `seats` candidates per position, once per member) and fairchild-fe a voting page. Until then results and turnout stay at 0.
+
+- **Blasts need a server that keeps running.** The blast worker runs in the background, outside any request. On Cloud Run that needs CPU always allocated and at least one instance; otherwise sending stalls between requests.
+- **Email blasts are limited by the SMTP account.** A Gmail/Workspace SMTP account sends at most a few hundred to ~2,000 emails a day, far fewer than the ~10k members with an email. Large email blasts need a bulk email provider. SMS cost is per text (per segment for long ones).
+- **A blast message can be sent twice in one edge case:** the server stops after the provider accepted a message but before its outcome was saved. That claim is retried after 15 minutes.
+
 - **Nothing writes `loan_applications` yet.** fairchild_be has no member-facing "apply for a loan" endpoint. When one is added, it should insert into this table.
 - **`dailyVisitors` in `/admin/metrics` is always `[]`.** There's no analytics source yet.
 - **`totalMembers` counts registered portal accounts** (fairchild_be `users`, 12.5k locally), not the Members page's ledger + panel members (13k current members locally).
 - **`admin_members` isn't linked to the branch ledgers.** Its `FC` ids come from its own AUTO_INCREMENT (starting at 20001), not ledger client ids. A member added in the panel isn't written to a ledger.
-- **A cold `/admin/dashboard` takes ~18 s locally** with all three ledgers connected (it sums ~5M `sldtl` rows); cached responses take milliseconds for the next 10 minutes.
+- **Active-loan totals are computed in the background,** at startup and then every 10 minutes (every minute after a failure), so `/admin/dashboard` answers in milliseconds. The scan sums ~5M `sldtl` rows across the ledgers in parallel, ~5 s locally for the largest branch; only a dashboard load in those first seconds after startup waits for it.
 - **A portal account's branch comes from a ledger index cached for 10 minutes** (every `OldClientID` per branch, matched to `users.member_id`), so a newly added ledger member shows its branch within 10 minutes. Accounts whose member number is on no ledger show no branch and drop out when a branch filter is picked.
 - **Portal accounts added from the panel have no password.** The member sets one with the portal's Forgot Password (email, then an OTP to the mobile number), the same path as the ~3,500 migrated accounts.
 - **Ledger member search scans each branch's `client` table** (no full-text index). Fine at ~20k rows; revisit if branches grow a lot.
-- **Active-loan totals scan each branch ledger.** They're cached for 10 minutes. If a refresh fails and an older value exists, the older value is served.
+- **Active-loan totals can be up to 10 minutes old.** If a refresh fails, the previous value keeps being served until one succeeds.
 - **No user-management API yet** (create, suspend, reset password). Use `create-panel-user` or SQL for now.

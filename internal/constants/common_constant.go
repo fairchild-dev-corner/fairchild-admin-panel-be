@@ -26,6 +26,12 @@ const (
 	MEMBERSHIP_APPLICATION_ID_PREFIX = "MA-"
 	MEMBER_ID_PREFIX                 = "FC"
 	PORTAL_MEMBER_ID_PREFIX          = "PU-"
+	ACCOUNT_CLAIM_ID_PREFIX          = "CR-"
+	LOCKED_ACCOUNT_ID_PREFIX         = "LK-"
+	MESSAGE_BLAST_ID_PREFIX          = "MB-"
+	ELECTION_ID_PREFIX               = "EL-"
+	CONTACT_MESSAGE_ID_PREFIX        = "CM-"
+	CONTACT_REPLY_ID_PREFIX          = "RP-"
 
 	// JWT issuer/audience. Every access token is checked for both, so a token
 	// minted by fairchild_be (members) can never authenticate here even if

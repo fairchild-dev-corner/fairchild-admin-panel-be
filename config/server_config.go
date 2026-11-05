@@ -17,6 +17,7 @@ func ServerConfig(
 	branchDBs database.BranchDBs,
 	jwtConf *models.JWTConfig,
 	healthTargets []models.HealthCheckTarget,
+	messagingConf *models.MessagingConfig,
 ) {
 
 	if hostConf.BuildEnv != "dev" {
@@ -37,5 +38,5 @@ func ServerConfig(
 	slog.Info("Starting Server", "port", hostConf.Port)
 
 	// Run Server
-	core.NewAPIServer(ginServer, hostConf, mysqlDB, branchDBs, jwtConf, healthTargets).Run()
+	core.NewAPIServer(ginServer, hostConf, mysqlDB, branchDBs, jwtConf, healthTargets, messagingConf).Run()
 }

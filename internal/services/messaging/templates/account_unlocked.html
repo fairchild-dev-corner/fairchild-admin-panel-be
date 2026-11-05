@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.BrandName}}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f2f4f7; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f2f4f7; padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px; background-color:#ffffff; border-radius:8px; overflow:hidden; border:1px solid #e4e7eb;">
+          <tr>
+            <td style="background-color:#0f4c81; padding:24px 32px;">
+              <span style="font-size:18px; font-weight:bold; color:#ffffff;">{{.BrandName}}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:#1f2937;">Hi {{.Name}},</p>
+              <p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:#1f2937;">Your member portal account (Member ID <strong>{{.MemberNo}}</strong>) was locked after too many failed sign-in attempts. Our staff unlocked it on {{.UnlockedAt}}, so you can sign in again now.</p>
+              <p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:#1f2937;">If you've forgotten your password, use <strong>Forgot Password</strong> on the sign-in page.</p>
+              <p style="margin:0; font-size:15px; line-height:1.6; color:#1f2937;">If you didn't try to sign in, someone else may have been guessing your password. Please change it after you sign in, or contact us at fairchildcoop@fccmpc.org.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px; background-color:#f9fafb; border-top:1px solid #e4e7eb;">
+              <span style="font-size:12px; color:#6b7280;">This is an automated message about your {{.BrandName}} member portal account.</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

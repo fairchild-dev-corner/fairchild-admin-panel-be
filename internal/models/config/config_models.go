@@ -54,3 +54,38 @@ type HealthCheckTarget struct {
 	Name string
 	URL  string
 }
+
+// SMTPConfig is the mailbox contact message replies are sent from.
+type SMTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	From     string
+}
+
+// MoviderConfig is the Movider SMS account (fairchild_be's OTP gateway)
+// contact message replies are texted from. SenderName is optional.
+type MoviderConfig struct {
+	APIKey     string
+	APISecret  string
+	SenderName string
+}
+
+// MessagingConfig holds the optional outbound channels; a nil one is
+// disabled.
+type MessagingConfig struct {
+	SMTP    *SMTPConfig
+	Movider *MoviderConfig
+	Blast   BlastConfig
+}
+
+// BlastConfig paces SMS/email blasts. In test mode (any build but prod)
+// only TestRecipients (emails and mobile numbers, as configured) are
+// actually messaged; everyone else is recorded as skipped.
+type BlastConfig struct {
+	TestMode       bool
+	TestRecipients []string
+	EmailsPerMin   int
+	SMSPerMin      int
+}

@@ -80,6 +80,19 @@ func resolveLedger(index map[string][]models.LedgerLink, memberNo, clientID stri
 	return candidates[0], true
 }
 
+// BranchResolver returns a lookup of an account's ledger branch, matched the
+// same way as the list, for the blast audience filter.
+func (s *PortalService) BranchResolver(ctx context.Context) (func(memberNo, clientID string) (string, bool), error) {
+	index, err := s.ledgerIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return func(memberNo, clientID string) (string, bool) {
+		link, ok := resolveLedger(index, strings.TrimSpace(memberNo), strings.TrimSpace(clientID))
+		return link.Branch, ok
+	}, nil
+}
+
 func attach(m *models.PortalMember, link models.LedgerLink) {
 	m.Branch = link.Branch
 	m.Category = link.Category

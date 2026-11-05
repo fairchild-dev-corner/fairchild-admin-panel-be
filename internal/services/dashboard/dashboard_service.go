@@ -13,23 +13,32 @@ import (
 )
 
 const (
-	// The ledger aggregate scans every branch's sldtl - far too heavy to run
-	// on every dashboard load, and loan balances only move when branches
-	// post, so a few minutes of staleness is fine.
+	// The ledger aggregate scans every branch's sldtl (~5s for the largest
+	// branch) - far too heavy to run on a dashboard load, and loan balances
+	// only move when branches post, so a few minutes of staleness is fine.
 	loanTotalsTTL     = 10 * time.Minute
-	loanTotalsTimeout = 30 * time.Second
+	loanTotalsRetry   = time.Minute
+	loanTotalsTimeout = time.Minute
 )
 
 type DashboardService struct {
 	repo interfaces.DashboardRepositoryInterface
 
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	loanTotals  *models.LoanTotals
 	loanTotalAt time.Time
+	loanErr     error
+	// loanReady is closed once the first refresh has finished.
+	loanReady chan struct{}
 }
 
+// NewDashboardService starts refreshing the active-loan totals in the
+// background right away, so they're ready before the first dashboard load
+// and no request ever waits on the ledger scan.
 func NewDashboardService(repo interfaces.DashboardRepositoryInterface) *DashboardService {
-	return &DashboardService{repo: repo}
+	s := &DashboardService{repo: repo, loanReady: make(chan struct{})}
+	go s.refreshLoanTotalsLoop()
+	return s
 }
 
 func (s *DashboardService) GetSummary(ctx context.Context) (*models.DashboardSummary, error) {
@@ -57,31 +66,60 @@ func (s *DashboardService) GetSummary(ctx context.Context) (*models.DashboardSum
 	}, nil
 }
 
-// activeLoanTotals serves the cached ledger aggregate, refreshing it once
-// it's older than loanTotalsTTL. The mutex also collapses concurrent
-// refreshes into one. If a refresh fails but an older value exists, the
-// stale value is served (and the error logged) rather than failing the whole
-// dashboard - the health page shows which ledger DB is down.
+// activeLoanTotals returns the latest background-computed totals. Only a
+// request that arrives before the first refresh after startup waits, and
+// only for that refresh.
 func (s *DashboardService) activeLoanTotals(ctx context.Context) (*models.LoanTotals, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	select {
+	case <-s.loanReady:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
-	if s.loanTotals != nil && time.Since(s.loanTotalAt) < loanTotalsTTL {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.loanTotals != nil {
 		return s.loanTotals, nil
 	}
+	return nil, s.loanErr
+}
 
-	ctx, cancel := context.WithTimeout(ctx, loanTotalsTimeout)
+// refreshLoanTotalsLoop recomputes the totals every loanTotalsTTL, or after
+// loanTotalsRetry when a refresh fails. A failed refresh keeps serving the
+// previous value (the health page shows which ledger DB is down).
+func (s *DashboardService) refreshLoanTotalsLoop() {
+	for first := true; ; first = false {
+		ok := s.refreshLoanTotals()
+		if first {
+			close(s.loanReady)
+		}
+		if ok {
+			time.Sleep(loanTotalsTTL)
+		} else {
+			time.Sleep(loanTotalsRetry)
+		}
+	}
+}
+
+func (s *DashboardService) refreshLoanTotals() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), loanTotalsTimeout)
 	defer cancel()
 
+	started := time.Now()
 	totals, err := s.repo.SumActiveLoans(ctx)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err != nil {
+		s.loanErr = err
 		if s.loanTotals != nil {
 			slog.Error("refreshing active loan totals failed, serving stale value", "age", time.Since(s.loanTotalAt), "error", err)
-			return s.loanTotals, nil
+		} else {
+			slog.Error("computing active loan totals failed", "error", err)
 		}
-		return nil, err
+		return false
 	}
-
-	s.loanTotals, s.loanTotalAt = totals, time.Now()
-	return totals, nil
+	s.loanTotals, s.loanTotalAt, s.loanErr = totals, time.Now(), nil
+	slog.Info("active loan totals refreshed", "took", time.Since(started).Round(time.Millisecond))
+	return true
 }
