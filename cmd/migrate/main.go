@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"log"
 	"log/slog"
@@ -12,12 +13,16 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
 var BuildEnv string
 
-const migrationsPath = "file://cmd/migrate/migrations"
+// The migrations are compiled into the binary, so the Docker image can run
+// them on start-up without shipping the .sql files beside it.
+//
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // migrationsTable keeps this service's migration history apart from
 // fairchild_be's. Both run golang-migrate against the same central Auth DB
@@ -52,7 +57,12 @@ func main() {
 		log.Fatalf("failed to init migrate driver: %v", err)
 	}
 
-	m, err := migrate.NewWithDatabaseInstance(migrationsPath, "mysql", driver)
+	source, err := iofs.New(migrationsFS, "migrations")
+	if err != nil {
+		log.Fatalf("failed to read embedded migrations: %v", err)
+	}
+
+	m, err := migrate.NewWithInstance("iofs", source, "mysql", driver)
 	if err != nil {
 		log.Fatalf("failed to init migrate instance: %v", err)
 	}

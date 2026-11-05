@@ -18,7 +18,7 @@ make run-dev                  # http://localhost:8081
 | Command | |
 |---|---|
 | `make run-dev` / `run-staging` / `run-prod` | build + run |
-| `make migrate-up-dev` / `migrate-down-dev` (`-stage`, `migrate-up-prod`) | migrations |
+| `make migrate-up-dev` / `migrate-down-dev` (`-stage`, `migrate-up-prod`) | migrations (the Docker image also runs `up` itself on every start) |
 | `make create-panel-user ENV=dev ARGS="..."` | add an admin/staff account |
 | `make seed-members ENV=dev` | sample rows for an empty `admin_members` (refuses if it has rows) |
 | `make test` | `go test ./...` |
