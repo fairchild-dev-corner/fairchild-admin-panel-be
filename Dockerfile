@@ -24,4 +24,4 @@ EXPOSE 8081
 # Apply pending migrations (the same as `make migrate-up-<env>`) before
 # starting; if they fail the container exits instead of serving against an
 # out-of-date schema. Never runs `down`.
-CMD ["/bin/sh", "-c", "/app/migrate up && exec /app/fairchild-admin-panel-be"]
+# CMD ["/bin/sh", "-c", "/app/migrate up && exec /app/fairchild-admin-panel-be"]
