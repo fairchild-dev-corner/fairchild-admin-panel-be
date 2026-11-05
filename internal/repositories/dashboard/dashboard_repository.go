@@ -40,9 +40,10 @@ func (r *DashboardRepository) CountCentral(ctx context.Context, monthStart time.
 			(SELECT COUNT(*) FROM users WHERE status <> 'deleted' AND deleted_at IS NULL AND created_at >= ?),
 			(SELECT COUNT(*) FROM loan_applications WHERE status = 'pending'),
 			(SELECT COUNT(*) FROM membership_applications WHERE status = 'pending'),
+			(SELECT COUNT(*) FROM account_claim_requests WHERE status = 'pending'),
 			(SELECT maintenance_mode FROM site_status WHERE id = 1)`,
 		monthStart.UTC(),
-	).Scan(&c.TotalMembers, &c.NewMembersThisMonth, &c.PendingLoanApplications, &c.PendingMembershipApplications, &maintenance)
+	).Scan(&c.TotalMembers, &c.NewMembersThisMonth, &c.PendingLoanApplications, &c.PendingMembershipApplications, &c.PendingAccountClaims, &maintenance)
 	if err != nil {
 		return nil, err
 	}

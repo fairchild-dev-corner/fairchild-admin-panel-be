@@ -60,6 +60,7 @@ func (s *DashboardService) GetSummary(ctx context.Context) (*models.DashboardSum
 		NewMembersThisMonth:           central.NewMembersThisMonth,
 		PendingLoanApplications:       central.PendingLoanApplications,
 		PendingMembershipApplications: central.PendingMembershipApplications,
+		PendingAccountClaims:          central.PendingAccountClaims,
 		ActiveLoans:                   loans.Count,
 		ActiveLoanBalance:             math.Round(loans.Balance*100) / 100,
 		MaintenanceMode:               central.MaintenanceMode,

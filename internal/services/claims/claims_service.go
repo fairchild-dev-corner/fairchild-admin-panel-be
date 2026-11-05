@@ -33,7 +33,7 @@ func NewClaimsService(repo interfaces.ClaimsRepositoryInterface, email messaging
 
 func (s *ClaimsService) List(ctx context.Context, q models.ClaimListQuery) (*models.ClaimPage, error) {
 	q.Search = strings.TrimSpace(q.Search)
-	counts, err := s.repo.CountByStatus(ctx, q.Search)
+	counts, err := s.repo.CountByStatus(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,11 @@ func (s *ClaimsService) textApproval(ctx context.Context, c *models.ClaimRequest
 	return locks_models.NotifySent
 }
 
-func (s *ClaimsService) Reject(ctx context.Context, rawID string, req *models.RejectClaimRequest, actor audit_models.Actor) (*models.ClaimRequest, error) {
+// Reject turns the claim down with an optional reason, then tells the member
+// by email and text on the details already on their portal account - never
+// the claimed ones, which may not be theirs. A failed message doesn't undo
+// the rejection; the result says which channels went out.
+func (s *ClaimsService) Reject(ctx context.Context, rawID string, req *models.RejectClaimRequest, actor audit_models.Actor) (*models.RejectResult, error) {
 	id, ok := app_models.ParseID(cc.ACCOUNT_CLAIM_ID_PREFIX, rawID)
 	if !ok {
 		return nil, cc.ErrClaimNotFound
@@ -173,5 +177,70 @@ func (s *ClaimsService) Reject(ctx context.Context, rawID string, req *models.Re
 	if err := s.repo.Reject(ctx, id, reason, actor.Log(cc.AUDIT_REJECTED_ACCOUNT_CLAIM, claims_repo.FormatClaimID(id))); err != nil {
 		return nil, err
 	}
-	return s.Get(ctx, rawID)
+
+	// As in Approve: the rejection is done, so notify even if the client left.
+	ctx = context.WithoutCancel(ctx)
+	rejected, err := s.Get(ctx, rawID)
+	if err != nil {
+		return nil, err
+	}
+	var account models.ClaimAccount
+	if rejected.Account != nil {
+		account = *rejected.Account
+	}
+	return &models.RejectResult{
+		Claim: rejected,
+		Notifications: map[string]string{
+			"email": s.emailRejection(ctx, rejected, account),
+			"sms":   s.textRejection(ctx, rejected, account),
+		},
+	}, nil
+}
+
+func (s *ClaimsService) emailRejection(ctx context.Context, c *models.ClaimRequest, account models.ClaimAccount) string {
+	if s.email == nil {
+		return locks_models.NotifyUnavailable
+	}
+	if strings.TrimSpace(account.Email) == "" {
+		return locks_models.NotifyNoAddress
+	}
+	name := messaging.FriendlyFirstName(account.FirstName)
+	if name == "" {
+		name = "Member"
+	}
+	html, err := messaging.RenderClaimRejected(messaging.ClaimRejectedData{
+		Name:     name,
+		MemberNo: c.MemberNo,
+		Reason:   c.RejectionReason,
+	})
+	if err != nil {
+		slog.Error("rendering claim rejection email failed", "claim", c.ID, "err", err)
+		return locks_models.NotifyFailed
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, notifyTimeout)
+	defer cancel()
+	if err := s.email.SendEmail(sendCtx, strings.TrimSpace(account.Email), messaging.ClaimRejectedSubject, html); err != nil {
+		slog.Error("claim rejection email failed", "claim", c.ID, "err", err)
+		return locks_models.NotifyFailed
+	}
+	return locks_models.NotifySent
+}
+
+func (s *ClaimsService) textRejection(ctx context.Context, c *models.ClaimRequest, account models.ClaimAccount) string {
+	if s.sms == nil {
+		return locks_models.NotifyUnavailable
+	}
+	to, ok := messaging.NormalizeMobileNumber(account.MobileNumber)
+	if !ok {
+		return locks_models.NotifyNoAddress
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, notifyTimeout)
+	defer cancel()
+	if err := s.sms.SendSMS(sendCtx, to, messaging.ClaimRejectedSMS(account.FirstName, c.RejectionReason)); err != nil {
+		slog.Error("claim rejection SMS failed", "claim", c.ID, "err", err)
+		return locks_models.NotifyFailed
+	}
+	return locks_models.NotifySent
 }

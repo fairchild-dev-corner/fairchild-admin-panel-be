@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // Statuses lists account_claim_requests.status values, in tab order.
 var Statuses = []string{"pending", "approved", "rejected"}
 
@@ -37,15 +39,19 @@ type ClaimRequest struct {
 }
 
 // ClaimListQuery is GET /admin/account-claims?status=&q=&page=&pageSize=.
+// From/To (UTC, To exclusive) limit the submission date and come from
+// ?month=YYYY-MM or ?year=YYYY; nil means any date.
 type ClaimListQuery struct {
 	Status   string
 	Search   string
+	From     *time.Time
+	To       *time.Time
 	Page     int
 	PageSize int
 }
 
 // ClaimPage matches ClaimRequestPage in the panel. StatusCounts honours the
-// search.
+// search and the date filter.
 type ClaimPage struct {
 	Items        []ClaimRequest `json:"items"`
 	Total        int            `json:"total"`
@@ -59,6 +65,15 @@ type ClaimPage struct {
 // as an unlock (locks.NotifySent etc.): the member is told on the email and
 // mobile number that were just put on their account.
 type ApproveResult struct {
+	Claim         *ClaimRequest     `json:"claim"`
+	Notifications map[string]string `json:"notifications"`
+}
+
+// RejectResult is the body of PUT /admin/account-claims/:id/reject.
+// Notifications are as in ApproveResult, but go to the email and mobile
+// number already on the member's portal account: the claimed ones were just
+// turned down, so they may not be the member's.
+type RejectResult struct {
 	Claim         *ClaimRequest     `json:"claim"`
 	Notifications map[string]string `json:"notifications"`
 }

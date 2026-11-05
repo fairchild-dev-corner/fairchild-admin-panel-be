@@ -148,3 +148,43 @@ func RenderClaimApproved(data ClaimApprovedData) (string, error) {
 	}
 	return buf.String(), nil
 }
+
+//go:embed templates/claim_rejected.html
+var claimRejectedFS embed.FS
+
+var claimRejectedTmpl = template.Must(template.ParseFS(claimRejectedFS, "templates/claim_rejected.html"))
+
+// ClaimRejectedSubject is the subject line of the email sent when an admin
+// rejects a member's Claim Account request.
+const ClaimRejectedSubject = "Your " + BrandName + " account claim request was not approved"
+
+// ClaimRejectedSMS is the text sent for the same rejection, with the
+// admin's reason when there is one.
+func ClaimRejectedSMS(firstName, reason string) string {
+	greeting := "Hi"
+	if name := FriendlyFirstName(firstName); name != "" {
+		greeting += " " + name
+	}
+	msg := greeting + ", your " + BrandName + " account claim request was not approved."
+	if reason = strings.TrimRight(strings.TrimSpace(reason), ".!? "); reason != "" {
+		msg += " Reason: " + reason + "."
+	}
+	return msg + " You may submit a new request or visit your branch. Questions: fairchildcoop@fccmpc.org."
+}
+
+// ClaimRejectedData fills templates/claim_rejected.html.
+type ClaimRejectedData struct {
+	BrandName string
+	Name      string
+	MemberNo  string
+	Reason    string
+}
+
+func RenderClaimRejected(data ClaimRejectedData) (string, error) {
+	data.BrandName = BrandName
+	var buf bytes.Buffer
+	if err := claimRejectedTmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}

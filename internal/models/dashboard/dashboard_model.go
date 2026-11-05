@@ -9,6 +9,7 @@ type DashboardSummary struct {
 	NewMembersThisMonth           int     `json:"newMembersThisMonth"`
 	PendingLoanApplications       int     `json:"pendingLoanApplications"`
 	PendingMembershipApplications int     `json:"pendingMembershipApplications"`
+	PendingAccountClaims          int     `json:"pendingAccountClaims"`
 	ActiveLoans                   int     `json:"activeLoans"`
 	ActiveLoanBalance             float64 `json:"activeLoanBalance"`
 	MaintenanceMode               bool    `json:"maintenanceMode"`
@@ -20,6 +21,7 @@ type CentralCounts struct {
 	NewMembersThisMonth           int
 	PendingLoanApplications       int
 	PendingMembershipApplications int
+	PendingAccountClaims          int
 	MaintenanceMode               bool
 }
 

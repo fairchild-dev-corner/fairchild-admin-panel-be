@@ -40,7 +40,9 @@ func (h *ClaimsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.PUT("/account-claims/:id/reject", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleReject)
 }
 
-// handleList: GET /admin/account-claims?status=&q=&page=&pageSize=
+// handleList: GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=
+// month (YYYY-MM) or year (YYYY), in Asia/Manila, limits the submission
+// date; without either, every date.
 func (h *ClaimsHandler) handleList(ctx *gin.Context) {
 	q := models.ClaimListQuery{
 		Status:   ctx.DefaultQuery("status", cc.APPLICATION_STATUS_PENDING),
@@ -48,10 +50,12 @@ func (h *ClaimsHandler) handleList(ctx *gin.Context) {
 		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
-	if !slices.Contains(models.Statuses, q.Status) {
+	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
+	if !ok || !slices.Contains(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_CLAIM_FILTER, http.StatusBadRequest)
 		return
 	}
+	q.From, q.To = from, to
 
 	page, err := h.claimsService.List(ctx, q)
 	if err != nil {

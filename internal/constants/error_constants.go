@@ -36,7 +36,7 @@ const (
 	CLAIM_ALREADY_REVIEWED   = "This claim has already been reviewed"
 	CLAIM_NO_PORTAL_ACCOUNT  = "No portal account uses this member ID. Add the member on the Portal page first, then approve the claim"
 	CLAIM_INVALID_CONTACT    = "The requested email or mobile number isn't valid. Reject the claim and ask the member to submit it again"
-	INVALID_CLAIM_FILTER     = "status must be one of: pending, approved, rejected"
+	INVALID_CLAIM_FILTER     = "status must be one of: pending, approved, rejected; month is YYYY-MM and year is YYYY, not both"
 	LOCKED_ACCOUNT_NOT_FOUND = "This account isn't locked anymore. It may have been unlocked already or the lock expired"
 	INVALID_LOCK_FILTER      = "status must be locked or unlocked; month is YYYY-MM and year is YYYY, not both"
 	BLAST_NOT_FOUND          = "Blast not found"

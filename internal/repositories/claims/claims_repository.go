@@ -85,20 +85,26 @@ func scanClaim(row interface{ Scan(...any) error }) (*models.ClaimRequest, error
 	return &c, nil
 }
 
-// searchWhere matches the member number, the claim id ("CR-00012" or "12"),
-// or a substring of the claimed name, the proposed contact details or the
-// matched account's name.
-func searchWhere(search string) (string, []any) {
-	like := "%" + utils.EscapeLike(search) + "%"
-	searchID, _ := app_models.ParseID(cc.ACCOUNT_CLAIM_ID_PREFIX, search)
-	return `(? = '' OR c.id = ? OR c.member_id = ?
+// filterWhere matches the search - the member number, the claim id
+// ("CR-00012" or "12"), or a substring of the claimed name, the proposed
+// contact details or the matched account's name - and the submission-date
+// range, when there is one.
+func filterWhere(q models.ClaimListQuery) (string, []any) {
+	like := "%" + utils.EscapeLike(q.Search) + "%"
+	searchID, _ := app_models.ParseID(cc.ACCOUNT_CLAIM_ID_PREFIX, q.Search)
+	where := `(? = '' OR c.id = ? OR c.member_id = ?
 	        OR c.full_name LIKE ? OR c.proposed_email LIKE ? OR c.proposed_mobile_number LIKE ?
-	        OR CONCAT_WS(' ', u.first_name, u.middle_name, u.last_name, u.suffix) LIKE ?)`,
-		[]any{search, searchID, search, like, like, like, like}
+	        OR CONCAT_WS(' ', u.first_name, u.middle_name, u.last_name, u.suffix) LIKE ?)`
+	args := []any{q.Search, searchID, q.Search, like, like, like, like}
+	if q.From != nil && q.To != nil {
+		where += ` AND c.created_at >= ? AND c.created_at < ?`
+		args = append(args, *q.From, *q.To)
+	}
+	return where, args
 }
 
-func (r *ClaimsRepository) CountByStatus(ctx context.Context, search string) (map[string]int, error) {
-	where, args := searchWhere(search)
+func (r *ClaimsRepository) CountByStatus(ctx context.Context, q models.ClaimListQuery) (map[string]int, error) {
+	where, args := filterWhere(q)
 	rows, err := r.DB.QueryContext(ctx, `SELECT c.status, COUNT(*)`+claimFrom+` WHERE `+where+` GROUP BY c.status`, args...)
 	if err != nil {
 		return nil, err
@@ -120,15 +126,11 @@ func (r *ClaimsRepository) CountByStatus(ctx context.Context, search string) (ma
 	return counts, rows.Err()
 }
 
-// List returns one page of claims with this status. Pending claims are
-// oldest first (the order they should be handled in); reviewed ones newest
+// List returns one page of claims with this status, most recently submitted
 // first.
 func (r *ClaimsRepository) List(ctx context.Context, q models.ClaimListQuery) ([]models.ClaimRequest, error) {
-	where, args := searchWhere(q.Search)
-	order := `c.created_at DESC, c.id DESC`
-	if q.Status == cc.APPLICATION_STATUS_PENDING {
-		order = `c.created_at, c.id`
-	}
+	where, args := filterWhere(q)
+	const order = `c.created_at DESC, c.id DESC`
 	args = append([]any{q.Status}, args...)
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 

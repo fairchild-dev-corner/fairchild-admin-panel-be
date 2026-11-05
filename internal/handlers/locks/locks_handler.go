@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"time"
 
 	cc "fairchild-admin-panel-be/internal/constants"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
@@ -48,7 +47,7 @@ func (h *LocksHandler) handleList(ctx *gin.Context) {
 		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
-	from, to, ok := parsePeriod(ctx.Query("month"), ctx.Query("year"))
+	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
 	if !ok || !slices.Contains(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_LOCK_FILTER, http.StatusBadRequest)
 		return
@@ -61,33 +60,6 @@ func (h *LocksHandler) handleList(ctx *gin.Context) {
 		return
 	}
 	loggers.SuccessResponse(ctx, page)
-}
-
-// parsePeriod turns ?month=YYYY-MM or ?year=YYYY into a UTC [from, to)
-// range in the cooperative's time zone. Neither gives nil, nil; both, or a
-// malformed value, is not ok.
-func parsePeriod(month, year string) (from, to *time.Time, ok bool) {
-	var start, end time.Time
-	switch {
-	case month != "" && year != "":
-		return nil, nil, false
-	case month != "":
-		t, err := time.ParseInLocation("2006-01", month, utils.ManilaTZ)
-		if err != nil {
-			return nil, nil, false
-		}
-		start, end = t, t.AddDate(0, 1, 0)
-	case year != "":
-		t, err := time.ParseInLocation("2006", year, utils.ManilaTZ)
-		if err != nil {
-			return nil, nil, false
-		}
-		start, end = t, t.AddDate(1, 0, 0)
-	default:
-		return nil, nil, true
-	}
-	start, end = start.UTC(), end.UTC()
-	return &start, &end, true
 }
 
 // handleUnlock: PUT /admin/locked-accounts/:id/unlock
