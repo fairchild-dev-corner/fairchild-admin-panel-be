@@ -118,8 +118,13 @@ func searchWhere(search string) (string, []any) {
 }
 
 // statusWhere selects one tab and applies the date range to that tab's date:
-// when it was locked, or when it was unlocked.
+// when it was locked, or when it was unlocked. cc.FILTER_ALL is either tab.
 func statusWhere(q models.LockedAccountListQuery, status string) (string, []any) {
+	if status == cc.FILTER_ALL {
+		locked, lockedArgs := statusWhere(q, models.Statuses[0])
+		unlocked, unlockedArgs := statusWhere(q, models.Statuses[1])
+		return `(` + locked + ` OR ` + unlocked + `)`, append(lockedArgs, unlockedArgs...)
+	}
 	cond, date := activeLock, `l.locked_at`
 	if status == models.Statuses[1] {
 		cond, date = `NOT `+activeLock, unlockedAtExpr
@@ -147,7 +152,8 @@ func (r *LocksRepository) CountByStatus(ctx context.Context, q models.LockedAcco
 	return map[string]int{models.Statuses[0]: locked, models.Statuses[1]: unlocked}, nil
 }
 
-// List returns one page of the tab, newest first by that tab's date.
+// List returns one page of the tab, newest first by that tab's date
+// (cc.FILTER_ALL: by when it was locked).
 func (r *LocksRepository) List(ctx context.Context, q models.LockedAccountListQuery) ([]models.LockedAccount, error) {
 	status, statusArgs := statusWhere(q, q.Status)
 	where, searchArgs := searchWhere(q.Search)

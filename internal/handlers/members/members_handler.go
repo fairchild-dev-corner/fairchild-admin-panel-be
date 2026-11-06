@@ -41,7 +41,7 @@ func listQuery(ctx *gin.Context) (models.MemberListQuery, bool) {
 		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), service.DefaultPageSize)), service.MaxPageSize),
 	}
-	if !slices.Contains(models.Categories, q.Category) {
+	if !utils.IsTabFilter(models.Categories, q.Category) {
 		loggers.GetCommonError(ctx, cc.INVALID_MEMBER_FILTER, http.StatusBadRequest)
 		return q, false
 	}

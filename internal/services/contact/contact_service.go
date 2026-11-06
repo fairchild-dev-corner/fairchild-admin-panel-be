@@ -43,7 +43,7 @@ func (s *ContactService) List(ctx context.Context, q models.ContactListQuery) (*
 	}
 
 	page := &models.ContactMessagePage{
-		Total:        counts[q.Status],
+		Total:        utils.TotalFor(counts, q.Status),
 		Page:         q.Page,
 		PageSize:     q.PageSize,
 		StatusCounts: counts,

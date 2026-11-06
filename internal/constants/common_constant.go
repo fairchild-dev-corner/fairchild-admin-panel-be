@@ -18,6 +18,10 @@ const (
 	APPLICATION_STATUS_APPROVED = "approved"
 	APPLICATION_STATUS_REJECTED = "rejected"
 
+	// FILTER_ALL is the status (or category) a list is asked for while the
+	// admin searches: matches from every tab.
+	FILTER_ALL = "all"
+
 	// Membership types (membership_applications / admin_members)
 	MEMBERSHIP_TYPE_COOP = "coop"
 

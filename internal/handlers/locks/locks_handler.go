@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"strconv"
 
 	cc "fairchild-admin-panel-be/internal/constants"
@@ -48,7 +47,7 @@ func (h *LocksHandler) handleList(ctx *gin.Context) {
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
 	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
-	if !ok || !slices.Contains(models.Statuses, q.Status) {
+	if !ok || !utils.IsTabFilter(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_LOCK_FILTER, http.StatusBadRequest)
 		return
 	}

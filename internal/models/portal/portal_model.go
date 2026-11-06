@@ -72,6 +72,11 @@ type ContactUpdateRequest struct {
 	MobileNumber string `json:"mobileNumber" validate:"max=20"`
 }
 
+// StatusUpdateRequest is the body of PUT /admin/portal-members/:id/status.
+type StatusUpdateRequest struct {
+	Status string `json:"status" validate:"required,oneof=active pending_review inactive suspended"`
+}
+
 // LedgerLink is what a branch ledger knows about a member number.
 type LedgerLink struct {
 	MemberNo string

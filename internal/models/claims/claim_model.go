@@ -72,13 +72,16 @@ type ApproveResult struct {
 // RejectResult is the body of PUT /admin/account-claims/:id/reject.
 // Notifications are as in ApproveResult, but go to the email and mobile
 // number already on the member's portal account: the claimed ones were just
-// turned down, so they may not be the member's.
+// turned down, so they may not be the member's. Left out when the admin chose
+// not to notify the member.
 type RejectResult struct {
 	Claim         *ClaimRequest     `json:"claim"`
-	Notifications map[string]string `json:"notifications"`
+	Notifications map[string]string `json:"notifications,omitempty"`
 }
 
 // RejectClaimRequest is the body of PUT /admin/account-claims/:id/reject.
+// Notify is the reject dialog's "Notify the member" checkbox.
 type RejectClaimRequest struct {
 	Reason string `json:"reason" validate:"max=500"`
+	Notify bool   `json:"notify"`
 }

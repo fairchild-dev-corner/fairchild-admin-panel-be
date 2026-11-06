@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"strconv"
 
 	cc "fairchild-admin-panel-be/internal/constants"
@@ -31,13 +30,14 @@ func NewHandler(claimsService *service.ClaimsService) *ClaimsHandler {
 
 // RegisterRoutes mounts onto the already-guarded /admin group. Admin and
 // staff can view claims; approving (which changes a portal account's
-// email/mobile) or rejecting one is admin-only, like the Portal page's
-// contact update.
+// email/mobile), rejecting or deleting one is admin-only, like the Portal
+// page's contact update.
 func (h *ClaimsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/account-claims", h.handleList)
 	admin.GET("/account-claims/:id", h.handleGet)
 	admin.PUT("/account-claims/:id/approve", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleApprove)
 	admin.PUT("/account-claims/:id/reject", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleReject)
+	admin.DELETE("/account-claims/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleDelete)
 }
 
 // handleList: GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=
@@ -51,7 +51,7 @@ func (h *ClaimsHandler) handleList(ctx *gin.Context) {
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
 	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
-	if !ok || !slices.Contains(models.Statuses, q.Status) {
+	if !ok || !utils.IsTabFilter(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_CLAIM_FILTER, http.StatusBadRequest)
 		return
 	}
@@ -110,11 +110,26 @@ func (h *ClaimsHandler) handleReject(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, c)
 }
 
+// handleDelete: DELETE /admin/account-claims/:id - approved or rejected only.
+func (h *ClaimsHandler) handleDelete(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	if err := h.claimsService.Delete(ctx, ctx.Param("id"), actor); err != nil {
+		writeClaimError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, nil)
+}
+
 func writeClaimError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, cc.ErrClaimNotFound):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusNotFound)
 	case errors.Is(err, cc.ErrClaimAlreadyReviewed),
+		errors.Is(err, cc.ErrClaimStillPending),
 		errors.Is(err, cc.ErrClaimNoPortalAccount),
 		errors.Is(err, cc.ErrPortalEmailTaken):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusConflict)

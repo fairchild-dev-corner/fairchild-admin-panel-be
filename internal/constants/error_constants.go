@@ -19,7 +19,7 @@ const (
 	// Applications
 	APPLICATION_NOT_FOUND        = "Application not found"
 	APPLICATION_ALREADY_REVIEWED = "Application has already been reviewed"
-	INVALID_STATUS_FILTER        = "status must be one of: pending, approved, rejected"
+	INVALID_STATUS_FILTER        = "status must be one of: pending, approved, rejected, all"
 
 	// Members / manual membership requests
 	MEMBER_NOT_FOUND         = "Member not found"
@@ -30,15 +30,16 @@ const (
 	PORTAL_EMAIL_TAKEN       = "That email address is already used by another portal account"
 	PORTAL_ACCOUNT_EXISTS    = "This member number already has a portal account"
 	NOT_ON_LEDGER            = "No current member with that member number on that branch's ledger"
-	INVALID_PORTAL_FILTER    = "status must be one of: active, pending_review, inactive, suspended"
-	INVALID_MEMBER_FILTER    = "category must be one of: regular, associate, kiddie, aflatoun; branches: main, knowles, tiic"
+	INVALID_PORTAL_FILTER    = "status must be one of: active, pending_review, inactive, suspended, all"
+	INVALID_MEMBER_FILTER    = "category must be one of: regular, associate, kiddie, aflatoun, all; branches: main, knowles, tiic"
 	CLAIM_NOT_FOUND          = "Account claim not found"
 	CLAIM_ALREADY_REVIEWED   = "This claim has already been reviewed"
 	CLAIM_NO_PORTAL_ACCOUNT  = "No portal account uses this member ID. Add the member on the Portal page first, then approve the claim"
 	CLAIM_INVALID_CONTACT    = "The requested email or mobile number isn't valid. Reject the claim and ask the member to submit it again"
-	INVALID_CLAIM_FILTER     = "status must be one of: pending, approved, rejected; month is YYYY-MM and year is YYYY, not both"
+	INVALID_CLAIM_FILTER     = "status must be one of: pending, approved, rejected, all; month is YYYY-MM and year is YYYY, not both"
+	CLAIM_STILL_PENDING      = "Approve or reject this claim before deleting it"
 	LOCKED_ACCOUNT_NOT_FOUND = "This account isn't locked anymore. It may have been unlocked already or the lock expired"
-	INVALID_LOCK_FILTER      = "status must be locked or unlocked; month is YYYY-MM and year is YYYY, not both"
+	INVALID_LOCK_FILTER      = "status must be locked, unlocked or all; month is YYYY-MM and year is YYYY, not both"
 	BLAST_NOT_FOUND          = "Blast not found"
 	BLAST_NOT_SENDING        = "This blast has already finished or been cancelled"
 	BLAST_NO_RECIPIENTS      = "No members match this audience with an email or mobile number for the chosen channel"
@@ -64,7 +65,7 @@ const (
 
 	// Contact messages
 	CONTACT_MESSAGE_NOT_FOUND = "Contact message not found"
-	INVALID_CONTACT_FILTER    = "status must be one of: unreplied, replied"
+	INVALID_CONTACT_FILTER    = "status must be one of: unreplied, replied, all"
 	REPLY_EMAIL_UNAVAILABLE   = "Email replies aren't set up. Add the SMTP settings to the admin backend's .env"
 	REPLY_SMS_UNAVAILABLE     = "Text replies aren't set up. Add the Movider settings to the admin backend's .env"
 	REPLY_NO_MOBILE           = "No mobile number to text: the sender's email doesn't match a portal account with a valid mobile number"
@@ -164,6 +165,9 @@ var ErrClaimNoPortalAccount = errors.New(CLAIM_NO_PORTAL_ACCOUNT)
 // ErrClaimInvalidContact: the claim's proposed email or mobile can't be
 // stored on a portal account as-is.
 var ErrClaimInvalidContact = errors.New(CLAIM_INVALID_CONTACT)
+
+// ErrClaimStillPending: only a reviewed claim can be deleted.
+var ErrClaimStillPending = errors.New(CLAIM_STILL_PENDING)
 
 // ErrLockedAccountNotFound covers an unknown or malformed lock id and a lock
 // that has since expired or been lifted.

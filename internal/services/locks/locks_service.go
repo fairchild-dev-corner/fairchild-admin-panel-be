@@ -36,7 +36,7 @@ func (s *LocksService) List(ctx context.Context, q models.LockedAccountListQuery
 		return nil, err
 	}
 
-	page := &models.LockedAccountPage{Total: counts[q.Status], Page: q.Page, PageSize: q.PageSize, StatusCounts: counts}
+	page := &models.LockedAccountPage{Total: utils.TotalFor(counts, q.Status), Page: q.Page, PageSize: q.PageSize, StatusCounts: counts}
 	if lastPage := max(1, (page.Total+q.PageSize-1)/q.PageSize); page.Page > lastPage {
 		page.Page = lastPage
 	}

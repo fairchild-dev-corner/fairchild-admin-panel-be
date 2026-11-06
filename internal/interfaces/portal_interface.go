@@ -10,7 +10,7 @@ import (
 
 // PortalRepositoryInterface covers fairchild_be's `users` table (members'
 // portal accounts). The only writes are adding an account for a ledger
-// member, the contact update and the soft delete.
+// member, the contact update, the status change and the soft delete.
 type PortalRepositoryInterface interface {
 	// Every non-deleted account matching search, newest first, as light
 	// rows the service filters by branch, counts and pages.
@@ -25,9 +25,12 @@ type PortalRepositoryInterface interface {
 	// returns the new id and sets audit.Target. cc.ErrPortalAccountExists /
 	// cc.ErrPortalEmailTaken on a unique-key clash.
 	Create(ctx context.Context, member *member_models.Member, req *models.AddPortalMemberRequest, memberType string, audit *audit_models.AuditLog) (int64, error)
-	// UpdateContact and Remove return cc.ErrPortalMemberNotFound when no
+	// UpdateContact, UpdateStatus and Remove return cc.ErrPortalMemberNotFound when no
 	// live account has that id.
 	UpdateContact(ctx context.Context, id int64, req *models.ContactUpdateRequest, audit *audit_models.AuditLog) error
+	// Revokes the account's sessions when the new status is suspended, so
+	// the member is signed out on their next refresh.
+	UpdateStatus(ctx context.Context, id int64, status string, audit *audit_models.AuditLog) error
 	Remove(ctx context.Context, id int64, audit *audit_models.AuditLog) error
 }
 

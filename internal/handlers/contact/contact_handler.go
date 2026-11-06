@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"strconv"
 
 	cc "fairchild-admin-panel-be/internal/constants"
@@ -46,7 +45,7 @@ func (h *ContactHandler) handleList(ctx *gin.Context) {
 		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
-	if !slices.Contains(models.Statuses, q.Status) {
+	if !utils.IsTabFilter(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_CONTACT_FILTER, http.StatusBadRequest)
 		return
 	}

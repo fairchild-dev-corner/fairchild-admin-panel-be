@@ -26,7 +26,8 @@ import (
 * the same member_id. The only writes are a review: approving copies the
 * proposed email/mobile onto that account, rejecting records the reason.
 * Both flip the claim's status and write the audit entry in one transaction.
-* Who reviewed a claim is read back from that audit entry.
+* Who reviewed a claim is read back from that audit entry. A reviewed claim
+* can also be deleted.
 **/
 type ClaimsRepository struct {
 	DB *sql.DB
@@ -126,16 +127,16 @@ func (r *ClaimsRepository) CountByStatus(ctx context.Context, q models.ClaimList
 	return counts, rows.Err()
 }
 
-// List returns one page of claims with this status, most recently submitted
-// first.
+// List returns one page of claims with this status (or every status for
+// "all"), most recently submitted first.
 func (r *ClaimsRepository) List(ctx context.Context, q models.ClaimListQuery) ([]models.ClaimRequest, error) {
 	where, args := filterWhere(q)
 	const order = `c.created_at DESC, c.id DESC`
-	args = append([]any{q.Status}, args...)
+	args = append([]any{q.Status, q.Status}, args...)
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 
 	rows, err := r.DB.QueryContext(ctx,
-		claimSelect+` WHERE c.status = ? AND `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`,
+		claimSelect+` WHERE (? = 'all' OR c.status = ?) AND `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`,
 		args...,
 	)
 	if err != nil {
@@ -293,4 +294,30 @@ func lockPendingClaim(ctx context.Context, tx *sql.Tx, id int64) (string, error)
 		return "", cc.ErrClaimAlreadyReviewed
 	}
 	return memberNo, nil
+}
+
+// Delete removes a reviewed claim. cc.ErrClaimNotFound for an unknown id,
+// cc.ErrClaimStillPending while it's pending. The approve/reject audit entry
+// stays.
+func (r *ClaimsRepository) Delete(ctx context.Context, id int64, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		var status string
+		err := tx.QueryRowContext(ctx,
+			`SELECT status FROM account_claim_requests WHERE id = ? FOR UPDATE`, id,
+		).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cc.ErrClaimNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if status == cc.APPLICATION_STATUS_PENDING {
+			return cc.ErrClaimStillPending
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM account_claim_requests WHERE id = ?`, id); err != nil {
+			return err
+		}
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
 }

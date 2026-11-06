@@ -256,6 +256,31 @@ func (r *PortalRepository) UpdateContact(ctx context.Context, id int64, req *mod
 	})
 }
 
+// UpdateStatus sets users.status. Suspending also revokes the account's
+// sessions; fairchild_be refuses to sign a suspended account in or refresh
+// its tokens. Inactive accounts keep using the portal.
+func (r *PortalRepository) UpdateStatus(ctx context.Context, id int64, status string, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		if err := lockLiveAccount(ctx, tx, id); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET status = ? WHERE id = ?`, status, id); err != nil {
+			return err
+		}
+
+		if status == "suspended" {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE auth_sessions SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL`, id,
+			); err != nil {
+				return err
+			}
+		}
+
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+}
+
 // Remove soft-deletes the account the way fairchild_be marks deleted users,
 // and revokes its sessions so the member is signed out on their next refresh.
 func (r *PortalRepository) Remove(ctx context.Context, id int64, audit *audit_models.AuditLog) error {

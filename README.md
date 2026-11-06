@@ -40,9 +40,9 @@ make run-dev                  # http://localhost:8081
 | `DELETE /admin/members/:id` (panel members only; soft delete) | **admin only** |
 | `GET /admin/members/:id/soa`, `GET /admin/members/:id/soa/:ctrlNo`, `GET /admin/members/:id/standing` (ledger members only; read from that branch ledger's `wkfcsoa`, `sldtl` and `loan`, as fairchild_be does: statements dated in the last 2 months, or else the latest one, and the 12-month coop health score) | admin, staff |
 | `GET /admin/portal-members?status=&branches=&q=&page=&pageSize=`, `GET /admin/portal-members/:id` | admin, staff |
-| `GET /admin/portal-lookup?memberNo=`, `POST /admin/portal-members` (add a ledger member), `PUT /admin/portal-members/:id` `{email, mobileNumber}`, `DELETE /admin/portal-members/:id` | **admin only** |
+| `GET /admin/portal-lookup?memberNo=`, `POST /admin/portal-members` (add a ledger member), `PUT /admin/portal-members/:id` `{email, mobileNumber}`, `PUT /admin/portal-members/:id/status` `{status}` (active, pending_review, inactive or suspended; suspended also signs the member out), `DELETE /admin/portal-members/:id` | **admin only** |
 | `GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=` (newest submitted first; `month` YYYY-MM or `year` YYYY filters the submission date), `GET /admin/account-claims/:id` | admin, staff |
-| `PUT /admin/account-claims/:id/approve` (puts the requested email/mobile on the matching portal account, then emails and texts the member on them; returns `{claim, notifications}`), `PUT /admin/account-claims/:id/reject` `{reason}` (then emails and texts the member, with the reason, on the details already on their account, never the rejected ones; returns `{claim, notifications}`) | **admin only** |
+| `PUT /admin/account-claims/:id/approve` (puts the requested email/mobile on the matching portal account, then emails and texts the member on them; returns `{claim, notifications}`), `PUT /admin/account-claims/:id/reject` `{reason, notify}` (records the reason; with `notify`, emails and texts the member on the details already on their account and returns `{claim, notifications}`, otherwise just `{claim}`), `DELETE /admin/account-claims/:id` (approved or rejected claims only) | **admin only** |
 | `GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=` (login locks; `status` is `locked` or `unlocked`; `month` is `YYYY-MM` or `year` is `YYYY`, otherwise the last 3 months; dates are the lock date on `locked` and the unlock date on `unlocked`) | admin, staff |
 | `PUT /admin/locked-accounts/:id/unlock` (then emails and texts the member when the member ID has a portal account; the response says what was sent) | **admin only** |
 | `GET /admin/contact-messages?status=unreplied\|replied&q=&page=&pageSize=`, `GET /admin/contact-messages/:id` | admin, staff |
@@ -58,6 +58,8 @@ make run-dev                  # http://localhost:8081
 | `PUT /admin/account/profile` `{firstName, lastName, email, currentPassword}` (own name and email; email optional, unique among panel accounts), `PUT /admin/account/password` `{currentPassword, newPassword}` (at least 12 characters; signs the user out everywhere). Both confirm with the current password, which counts toward the login lockout when wrong (403), and are audited. | admin, staff |
 
 Application ids are accepted as `LA-01040` / `MA-00560` or the bare number, member ids as `FC20310` or `20310`, claim ids as `CR-00012` or `12`, lock ids as `LK-00012` or `12`, contact message ids as `CM-00012` or `12`, blast ids as `MB-00012` or `12`.
+
+The tabbed lists (portal members, members, account claims, locked accounts, contact messages, membership applications) also take `status=all` (members: `category=all`): matches from every tab, with `total` the sum of the tab counts. The panel switches to it while the admin is searching, so a match shows whatever its status or category.
 
 ### Voters' master list
 

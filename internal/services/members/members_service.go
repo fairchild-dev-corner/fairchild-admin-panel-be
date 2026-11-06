@@ -28,11 +28,13 @@ const (
 	MaxPageSize     = 100
 )
 
-// segment is one source's slice of the merged list: panel members first
-// (newest first), then each branch ledger in branch order (by surname).
+// segment is one source's slice of the merged list for one category: panel
+// members first (newest first), then each branch ledger in branch order (by
+// surname). With cc.FILTER_ALL the categories follow each other in tab order.
 type segment struct {
-	branch string // "" for the panel segment
-	size   int
+	branch   string // "" for the panel segment
+	category string
+	size     int
 }
 
 // ListMembers returns one page of members from admin_members and the
@@ -80,10 +82,17 @@ func (s *MembersService) ListMembers(ctx context.Context, q models.MemberListQue
 			page.CategoryCounts[c] += counts[b][c]
 		}
 	}
-	for _, b := range models.Branches {
-		page.BranchCounts[b] = counts[b][q.Category]
+	// cc.FILTER_ALL lists every category, one after another in tab order.
+	categories := []string{q.Category}
+	if q.Category == cc.FILTER_ALL {
+		categories = models.Categories
 	}
-	page.Total = page.CategoryCounts[q.Category]
+	for _, b := range models.Branches {
+		for _, c := range categories {
+			page.BranchCounts[b] += counts[b][c]
+		}
+	}
+	page.Total = utils.TotalFor(page.CategoryCounts, q.Category)
 
 	// Past the end (e.g. the last row of the last page was deleted): serve
 	// the last page instead of an empty one.
@@ -91,13 +100,17 @@ func (s *MembersService) ListMembers(ctx context.Context, q models.MemberListQue
 		page.Page = lastPage
 	}
 
-	segments := []segment{{size: 0}}
-	for _, b := range branches {
-		segments[0].size += panelCounts[b][q.Category]
-	}
-	for _, b := range models.Branches {
-		if slices.Contains(branches, b) && ledgerCounts[b] != nil {
-			segments = append(segments, segment{branch: b, size: ledgerCounts[b][q.Category]})
+	var segments []segment
+	for _, c := range categories {
+		panel := segment{category: c}
+		for _, b := range branches {
+			panel.size += panelCounts[b][c]
+		}
+		segments = append(segments, panel)
+		for _, b := range models.Branches {
+			if slices.Contains(branches, b) && ledgerCounts[b] != nil {
+				segments = append(segments, segment{branch: b, category: c, size: ledgerCounts[b][c]})
+			}
 		}
 	}
 
@@ -114,9 +127,9 @@ func (s *MembersService) ListMembers(ctx context.Context, q models.MemberListQue
 
 		var items []models.Member
 		if seg.branch == "" {
-			items, err = s.repo.ListMembers(ctx, q.Category, branches, q.Search, offset, n)
+			items, err = s.repo.ListMembers(ctx, seg.category, branches, q.Search, offset, n)
 		} else {
-			items, err = s.ledger.ListMembers(ctx, seg.branch, q.Category, q.Search, offset, n)
+			items, err = s.ledger.ListMembers(ctx, seg.branch, seg.category, q.Search, offset, n)
 		}
 		if err != nil {
 			return nil, err

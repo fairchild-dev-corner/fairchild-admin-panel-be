@@ -33,13 +33,14 @@ func NewHandler(portalService *service.PortalService) *PortalHandler {
 
 // RegisterRoutes mounts onto the already-guarded /admin group. Admin and
 // staff can view portal accounts; adding one for a ledger member, changing
-// an account's email/mobile or removing it is admin-only.
+// an account's email/mobile or status, or removing it is admin-only.
 func (h *PortalHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/portal-members", h.handleList)
 	admin.GET("/portal-lookup", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleLookup)
 	admin.POST("/portal-members", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleAdd)
 	admin.GET("/portal-members/:id", h.handleGet)
 	admin.PUT("/portal-members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUpdateContact)
+	admin.PUT("/portal-members/:id/status", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUpdateStatus)
 	admin.DELETE("/portal-members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleRemove)
 }
 
@@ -51,7 +52,7 @@ func (h *PortalHandler) handleList(ctx *gin.Context) {
 		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
 		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
 	}
-	if !slices.Contains(models.Statuses, q.Status) {
+	if !utils.IsTabFilter(models.Statuses, q.Status) {
 		loggers.GetCommonError(ctx, cc.INVALID_PORTAL_FILTER, http.StatusBadRequest)
 		return
 	}
@@ -128,6 +129,26 @@ func (h *PortalHandler) handleUpdateContact(ctx *gin.Context) {
 	}
 
 	m, err := h.portalService.UpdateContact(ctx, ctx.Param("id"), &req, actor)
+	if err != nil {
+		writePortalError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, m)
+}
+
+// handleUpdateStatus: PUT /admin/portal-members/:id/status {status}
+func (h *PortalHandler) handleUpdateStatus(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	var req models.StatusUpdateRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+
+	m, err := h.portalService.UpdateStatus(ctx, ctx.Param("id"), &req, actor)
 	if err != nil {
 		writePortalError(ctx, err)
 		return

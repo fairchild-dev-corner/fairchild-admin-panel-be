@@ -39,7 +39,7 @@ func (s *ClaimsService) List(ctx context.Context, q models.ClaimListQuery) (*mod
 	}
 
 	page := &models.ClaimPage{
-		Total:        counts[q.Status],
+		Total:        utils.TotalFor(counts, q.Status),
 		Page:         q.Page,
 		PageSize:     q.PageSize,
 		StatusCounts: counts,
@@ -164,10 +164,11 @@ func (s *ClaimsService) textApproval(ctx context.Context, c *models.ClaimRequest
 	return locks_models.NotifySent
 }
 
-// Reject turns the claim down with an optional reason, then tells the member
-// by email and text on the details already on their portal account - never
-// the claimed ones, which may not be theirs. A failed message doesn't undo
-// the rejection; the result says which channels went out.
+// Reject turns the claim down with an optional reason. When the admin asks
+// (req.Notify), the member is then told by email and text on the details
+// already on their portal account - never the claimed ones, which may not be
+// theirs. A failed message doesn't undo the rejection; the result says which
+// channels went out.
 func (s *ClaimsService) Reject(ctx context.Context, rawID string, req *models.RejectClaimRequest, actor audit_models.Actor) (*models.RejectResult, error) {
 	id, ok := app_models.ParseID(cc.ACCOUNT_CLAIM_ID_PREFIX, rawID)
 	if !ok {
@@ -183,6 +184,9 @@ func (s *ClaimsService) Reject(ctx context.Context, rawID string, req *models.Re
 	rejected, err := s.Get(ctx, rawID)
 	if err != nil {
 		return nil, err
+	}
+	if !req.Notify {
+		return &models.RejectResult{Claim: rejected}, nil
 	}
 	var account models.ClaimAccount
 	if rejected.Account != nil {
@@ -243,4 +247,14 @@ func (s *ClaimsService) textRejection(ctx context.Context, c *models.ClaimReques
 		return locks_models.NotifyFailed
 	}
 	return locks_models.NotifySent
+}
+
+// Delete removes an approved or rejected claim for good. A pending claim has
+// to be reviewed first.
+func (s *ClaimsService) Delete(ctx context.Context, rawID string, actor audit_models.Actor) error {
+	id, ok := app_models.ParseID(cc.ACCOUNT_CLAIM_ID_PREFIX, rawID)
+	if !ok {
+		return cc.ErrClaimNotFound
+	}
+	return s.repo.Delete(ctx, id, actor.Log(cc.AUDIT_DELETED_ACCOUNT_CLAIM, claims_repo.FormatClaimID(id)))
 }

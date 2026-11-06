@@ -127,10 +127,14 @@ func (s *PortalService) List(ctx context.Context, q models.PortalListQuery) (*mo
 		page.StatusCounts[st] = 0
 	}
 
+	// cc.FILTER_ALL takes every listed status ("deleted" never is).
+	inTab := func(status string) bool {
+		return status == q.Status || (q.Status == cc.FILTER_ALL && slices.Contains(models.Statuses, status))
+	}
 	var ids []int64
 	for _, k := range keys {
 		link, onLedger := resolveLedger(index, k.MemberNo, k.ClientID)
-		if k.Status == q.Status && onLedger {
+		if inTab(k.Status) && onLedger {
 			page.BranchCounts[link.Branch]++
 		}
 		if len(q.Branches) > 0 && !(onLedger && slices.Contains(q.Branches, link.Branch)) {
@@ -139,7 +143,7 @@ func (s *PortalService) List(ctx context.Context, q models.PortalListQuery) (*mo
 		if _, ok := page.StatusCounts[k.Status]; ok {
 			page.StatusCounts[k.Status]++
 		}
-		if k.Status == q.Status {
+		if inTab(k.Status) {
 			ids = append(ids, k.ID)
 		}
 	}
@@ -286,6 +290,28 @@ func (s *PortalService) UpdateContact(ctx context.Context, rawID string, req *mo
 		return nil, err
 	}
 	return s.Get(ctx, rawID)
+}
+
+// UpdateStatus moves a portal account between the statuses the panel lists.
+func (s *PortalService) UpdateStatus(ctx context.Context, rawID string, req *models.StatusUpdateRequest, actor audit_models.Actor) (*models.PortalMember, error) {
+	id, ok := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, rawID)
+	if !ok {
+		return nil, cc.ErrPortalMemberNotFound
+	}
+
+	audit := actor.Log(cc.AUDIT_CHANGED_PORTAL_STATUS+statusLabels[req.Status], portal_repo.FormatPortalID(id))
+	if err := s.repo.UpdateStatus(ctx, id, req.Status, audit); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, rawID)
+}
+
+// statusLabels match the panel's tab names, for the audit log.
+var statusLabels = map[string]string{
+	"active":         "Active",
+	"pending_review": "Pending review",
+	"inactive":       "Inactive",
+	"suspended":      "Suspended",
 }
 
 func (s *PortalService) Remove(ctx context.Context, rawID string, actor audit_models.Actor) error {

@@ -96,12 +96,16 @@ func (r *ContactRepository) CountByStatus(ctx context.Context, search string) (m
 }
 
 // List returns one page of messages with this status. Unreplied messages are
-// oldest first (the order to answer them in); replied ones newest first.
+// oldest first (the order to answer them in); replied ones, and every message
+// for cc.FILTER_ALL, newest first.
 func (r *ContactRepository) List(ctx context.Context, q models.ContactListQuery) ([]models.ContactMessage, error) {
 	where, args := searchWhere(q.Search)
 	status, order := `NOT `+repliedWhere, `m.created_at, m.id`
-	if q.Status == "replied" {
+	switch q.Status {
+	case "replied":
 		status, order = repliedWhere, `m.created_at DESC, m.id DESC`
+	case cc.FILTER_ALL:
+		status, order = `TRUE`, `m.created_at DESC, m.id DESC`
 	}
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 
