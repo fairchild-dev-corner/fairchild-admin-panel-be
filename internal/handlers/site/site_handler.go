@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
+	cc "fairchild-admin-panel-be/internal/constants"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	models "fairchild-admin-panel-be/internal/models/site"
 	"fairchild-admin-panel-be/internal/utils"
@@ -45,6 +47,10 @@ func (h *SiteHandler) handleUpdateSiteStatus(ctx *gin.Context) {
 
 	status, err := h.siteService.UpdateSiteStatus(ctx, &req, actor)
 	if err != nil {
+		if errors.Is(err, cc.ErrInvalidMaintenanceStart) {
+			loggers.GetCommonError(ctx, err.Error(), http.StatusBadRequest)
+			return
+		}
 		loggers.GetCommonError(ctx, err.Error(), http.StatusInternalServerError)
 		return
 	}

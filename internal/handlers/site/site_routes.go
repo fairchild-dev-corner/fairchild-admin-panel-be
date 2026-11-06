@@ -27,7 +27,7 @@ func NewHandler(siteService *service.SiteService) *SiteHandler {
 }
 
 // RegisterPublicRoutes mounts GET /site/status - no auth, read by
-// fairchild-fe to show its maintenance banner.
+// fairchild-fe; fairchild_be reads the same row for its own copy.
 func (h *SiteHandler) RegisterPublicRoutes(router *gin.RouterGroup) {
 	limiter := middlewares.NewIPRateLimiter(rate.Every(publicStatusRateLimitRefill), publicStatusRateLimitBurst)
 	router.GET("/site/status", limiter.Middleware(), h.handleGetPublicSiteStatus)

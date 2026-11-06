@@ -33,6 +33,7 @@ const (
 	AUDIT_EMAILED_CONTACT_REPLY           = "Emailed reply to contact message"
 	AUDIT_TEXTED_CONTACT_REPLY            = "Texted reply to contact message"
 	AUDIT_ENABLED_MAINTENANCE_MODE        = "Enabled maintenance mode"
+	AUDIT_SCHEDULED_MAINTENANCE_MODE      = "Scheduled maintenance mode"
 	AUDIT_DISABLED_MAINTENANCE_MODE       = "Disabled maintenance mode"
 	AUDIT_UPDATED_MAINTENANCE_MESSAGE     = "Updated maintenance message"
 )

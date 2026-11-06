@@ -30,7 +30,7 @@ make run-dev                  # http://localhost:8081
 |---|---|
 | `POST /auth/login` `{username, password}` | public; IP rate-limited |
 | `POST /auth/refresh`, `POST /auth/logout` | `admin_refresh_token` cookie |
-| `GET /site/status` | public (fairchild-fe's maintenance banner) |
+| `GET /site/status` | public (fairchild_be serves its own copy to fairchild-fe from the same `site_status` row) |
 | `GET /healthz` | public liveness |
 | `GET /admin/dashboard` | admin, staff |
 | `GET /admin/loan-applications?status=`, `GET /admin/loan-applications/:id`, `PUT /admin/loan-applications/:id/review` | admin, staff |
@@ -52,7 +52,7 @@ make run-dev                  # http://localhost:8081
 | `GET /admin/voters?status=&q=&page=&pageSize=` (`status`: `all` (default), `eligible` = voting, `ineligible` = non-voting), `GET /admin/voters/master-list` (current list + last upload), `GET /admin/voters/stats` (voting / non-voting per ledger branch, plus `none` for members on no ledger), `GET /admin/election-control` | admin, staff |
 | `POST /admin/voters/master-list/check` (multipart `file`: .xlsx or .csv; nothing saved), `PUT /admin/voters/master-list` `{fileName, members: [{memberNo, name}]}` (both only while the election is on; otherwise 409), `POST /admin/voters/master-list/reset` `{password}` (empties the list: everyone non-voting; only while the election is on, otherwise 409), `PUT /admin/election-control` `{enabled, password}` (the admin's own password; wrong = 403 and counts toward the login lockout) | **admin only** |
 | `GET /admin/site-status` | admin, staff |
-| `PUT /admin/site-status` | **admin only** |
+| `PUT /admin/site-status` (optional `startsAt` schedules it up to 30 days ahead - members are warned until then; optional `durationMinutes` lifts it on its own, counted from the start; when it starts, now or at `startsAt`, every member session in `auth_sessions` is revoked, by the save or by a 30-second scheduler, once per window via `site_status.signed_out_at`) | **admin only** |
 | `GET /admin/health`, `GET /admin/metrics`, `GET /admin/audit-log` | admin, staff |
 | `GET /admin/account` (the signed-in user's own profile, active sessions, last 10 sign-ins, last 15 actions) | admin, staff |
 | `PUT /admin/account/profile` `{firstName, lastName, email, currentPassword}` (own name and email; email optional, unique among panel accounts), `PUT /admin/account/password` `{currentPassword, newPassword}` (at least 12 characters; signs the user out everywhere). Both confirm with the current password, which counts toward the login lockout when wrong (403), and are audited. | admin, staff |
@@ -105,7 +105,7 @@ Each page lists panel members first (newest first), then each selected branch's 
 | `users_panel_sessions` | this service | refresh sessions (SHA-256 of the token only) |
 | `users_panel_login_audit` | this service | every login attempt; drives lockout |
 | `admin_audit_logs` | this service | one row per admin mutation, written in the same transaction |
-| `site_status` | this service | single-row maintenance flag |
+| `site_status` | this service | single-row maintenance flag, with optional scheduled start (`starts_at`) and end (`ends_at`) |
 | `loan_applications` | this service | online loan applications awaiting review |
 | `membership_application_reviews` | this service | who/when/why for reviews of fairchild_be's `membership_applications` |
 | `admin_members` | this service | members managed from the panel's Members page; deletes set `deleted_at` |

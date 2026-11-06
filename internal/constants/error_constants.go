@@ -66,6 +66,7 @@ const (
 	// Contact messages
 	CONTACT_MESSAGE_NOT_FOUND = "Contact message not found"
 	INVALID_CONTACT_FILTER    = "status must be one of: unreplied, replied, all"
+	INVALID_MAINTENANCE_START = "Pick a start time in the future, at most 30 days ahead"
 	REPLY_EMAIL_UNAVAILABLE   = "Email replies aren't set up. Add the SMTP settings to the admin backend's .env"
 	REPLY_SMS_UNAVAILABLE     = "Text replies aren't set up. Add the Movider settings to the admin backend's .env"
 	REPLY_NO_MOBILE           = "No mobile number to text: the sender's email doesn't match a portal account with a valid mobile number"
@@ -240,3 +241,7 @@ var (
 	ErrGuardianRequired        = errors.New(GUARDIAN_REQUIRED)
 	ErrCoopApplicantIncomplete = errors.New(COOP_APPLICANT_INCOMPLETE)
 )
+
+// ErrInvalidMaintenanceStart: a scheduled start must be in the future and
+// within models.MaxScheduleAheadDays.
+var ErrInvalidMaintenanceStart = errors.New(INVALID_MAINTENANCE_START)
