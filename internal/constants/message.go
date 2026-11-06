@@ -3,7 +3,6 @@ package cc
 const (
 	// Auth
 	SUCCESS_LOGOUT = "logged out successfully"
-
 	// Audit log actions
 	AUDIT_APPROVED_LOAN_APPLICATION       = "Approved loan application"
 	AUDIT_REJECTED_LOAN_APPLICATION       = "Rejected loan application"
