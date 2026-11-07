@@ -11,7 +11,9 @@ UPDATE users_panel SET role = 'super_admin' WHERE role = 'admin';
 
 -- One row per capability a manager, supervisor or staff account has (keys
 -- from internal/models/capabilities). No row: not allowed.
-CREATE TABLE panel_user_capabilities (
+-- IF NOT EXISTS / INSERT IGNORE: a first attempt died on the INSERT below
+-- after this table was created, so the migration must re-run cleanly.
+CREATE TABLE IF NOT EXISTS panel_user_capabilities (
 	user_panel_id BIGINT UNSIGNED NOT NULL,
 	capability    VARCHAR(64)     NOT NULL,
 	granted_by    BIGINT UNSIGNED DEFAULT NULL,
@@ -24,7 +26,7 @@ CREATE TABLE panel_user_capabilities (
 -- Existing staff keep exactly what the role-wide staff settings
 -- (panel_staff_capabilities) gave them: a saved setting, else the default
 -- staff had before this migration.
-INSERT INTO panel_user_capabilities (user_panel_id, capability, granted_by, granted_at)
+INSERT IGNORE INTO panel_user_capabilities (user_panel_id, capability, granted_by, granted_at)
 SELECT u.id, d.capability, NULL, NOW()
 FROM users_panel u
 CROSS JOIN (
@@ -56,7 +58,10 @@ CROSS JOIN (
 	UNION ALL SELECT 'metrics.view', TRUE
 	UNION ALL SELECT 'audit.view', TRUE
 ) d
-LEFT JOIN panel_staff_capabilities s ON s.capability = d.capability
+-- The literals above take the session collation (utf8mb4_general_ci, see
+-- pkg/database) while the table uses the server default; without an explicit
+-- COLLATE MySQL rejects the comparison as an illegal mix of collations.
+LEFT JOIN panel_staff_capabilities s ON s.capability = d.capability COLLATE utf8mb4_general_ci
 WHERE u.role = 'staff' AND COALESCE(s.allowed, d.staff_default);
 
-DROP TABLE panel_staff_capabilities;
+DROP TABLE IF EXISTS panel_staff_capabilities;
