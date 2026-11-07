@@ -16,7 +16,6 @@ import (
 * CORS must run before auth so unauthenticated preflight requests pass;
 * per-route guarding is applied via middlewares.RequirePanelAuth.
 **/
-
 type RouterConfig struct {
 	router           *gin.Engine
 	originsPermitted string
