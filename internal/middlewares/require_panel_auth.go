@@ -18,8 +18,8 @@ import (
 const panelUserKey = "panel_user"
 
 // RequirePanelAuth validates the "Authorization: Bearer <token>" header and
-// loads the caller's users_panel row, rejecting anyone who isn't an active
-// admin or staff account. This is the real authorization boundary for every
+// loads the caller's users_panel row, rejecting anyone whose account isn't
+// active. This is the real authorization boundary for every
 // /api/v1/admin/* route - the panel's RequireAdminGuard is UI only.
 func RequirePanelAuth(authService *auth_service.AuthService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -60,6 +60,12 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 		}
 		ctx.Next()
 	}
+}
+
+// RequireAdmin is RequireRole for super admins and admins, who manage
+// accounts and capabilities.
+func RequireAdmin() gin.HandlerFunc {
+	return RequireRole(cc.ROLE_SUPER_ADMIN, cc.ROLE_ADMIN)
 }
 
 // ActorFromContext builds the audit actor for the authenticated panel user.

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"strconv"
 
@@ -28,13 +29,14 @@ func NewHandler(contactService *service.ContactService) *ContactHandler {
 	return &ContactHandler{contactService: contactService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can read messages; replying (which emails or texts the sender) is
-// admin-only.
+// RegisterRoutes mounts onto the already-guarded /admin group. Replying
+// (which emails or texts the sender) is admins only unless allowed for staff
+// on the Capabilities page.
 func (h *ContactHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/contact-messages", h.handleList)
-	admin.GET("/contact-messages/:id", h.handleGet)
-	admin.POST("/contact-messages/:id/replies", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleReply)
+	need := middlewares.RequireCapability
+	admin.GET("/contact-messages", need(caps.ContactView), h.handleList)
+	admin.GET("/contact-messages/:id", need(caps.ContactView), h.handleGet)
+	admin.POST("/contact-messages/:id/replies", need(caps.ContactReply), h.handleReply)
 }
 
 // handleList: GET /admin/contact-messages?status=&q=&page=&pageSize=

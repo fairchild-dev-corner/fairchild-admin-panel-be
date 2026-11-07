@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"strconv"
 
@@ -28,16 +29,17 @@ func NewHandler(claimsService *service.ClaimsService) *ClaimsHandler {
 	return &ClaimsHandler{claimsService: claimsService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can view claims; approving (which changes a portal account's
-// email/mobile), rejecting or deleting one is admin-only, like the Portal
-// page's contact update.
+// RegisterRoutes mounts onto the already-guarded /admin group. Approving
+// (which changes a portal account's email/mobile), rejecting or deleting a
+// claim is one capability, admins only unless allowed for staff on the
+// Capabilities page.
 func (h *ClaimsHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/account-claims", h.handleList)
-	admin.GET("/account-claims/:id", h.handleGet)
-	admin.PUT("/account-claims/:id/approve", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleApprove)
-	admin.PUT("/account-claims/:id/reject", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleReject)
-	admin.DELETE("/account-claims/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleDelete)
+	need := middlewares.RequireCapability
+	admin.GET("/account-claims", need(caps.ClaimsView), h.handleList)
+	admin.GET("/account-claims/:id", need(caps.ClaimsView), h.handleGet)
+	admin.PUT("/account-claims/:id/approve", need(caps.ClaimsReview), h.handleApprove)
+	admin.PUT("/account-claims/:id/reject", need(caps.ClaimsReview), h.handleReject)
+	admin.DELETE("/account-claims/:id", need(caps.ClaimsReview), h.handleDelete)
 }
 
 // handleList: GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=

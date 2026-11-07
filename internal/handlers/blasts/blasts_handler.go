@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"strconv"
 
@@ -28,18 +29,18 @@ func NewHandler(blastsService *service.BlastsService) *BlastsHandler {
 	return &BlastsHandler{blastsService: blastsService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can see past blasts; sending, testing or cancelling one - which
-// messages members - is admin-only. Previewing the audience is admin-only
-// too, since only admins can act on it.
+// RegisterRoutes mounts onto the already-guarded /admin group. Sending,
+// testing or cancelling a blast - which messages members - is admins only
+// unless allowed for staff on the Capabilities page. Previewing the audience
+// goes with it, since only someone who can send acts on it.
 func (h *BlastsHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	adminOnly := middlewares.RequireRole(cc.ROLE_ADMIN)
-	admin.GET("/blasts", h.handleList)
-	admin.GET("/blasts/:id", h.handleGet)
-	admin.POST("/blasts/preview", adminOnly, h.handlePreview)
-	admin.POST("/blasts/test", adminOnly, h.handleTest)
-	admin.POST("/blasts", adminOnly, h.handleCreate)
-	admin.PUT("/blasts/:id/cancel", adminOnly, h.handleCancel)
+	need := middlewares.RequireCapability
+	admin.GET("/blasts", need(caps.BlastsView), h.handleList)
+	admin.GET("/blasts/:id", need(caps.BlastsView), h.handleGet)
+	admin.POST("/blasts/preview", need(caps.BlastsSend), h.handlePreview)
+	admin.POST("/blasts/test", need(caps.BlastsSend), h.handleTest)
+	admin.POST("/blasts", need(caps.BlastsSend), h.handleCreate)
+	admin.PUT("/blasts/:id/cancel", need(caps.BlastsSend), h.handleCancel)
 }
 
 // handleList: GET /admin/blasts?page=&pageSize=

@@ -1,9 +1,9 @@
 package handlers
 
 import (
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"time"
 
-	cc "fairchild-admin-panel-be/internal/constants"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	service "fairchild-admin-panel-be/internal/services/site"
 
@@ -34,8 +34,9 @@ func (h *SiteHandler) RegisterPublicRoutes(router *gin.RouterGroup) {
 }
 
 // RegisterRoutes mounts onto the already-guarded /admin group. Taking the
-// public site offline is admin-only; staff can see the current state.
+// member portal offline is admins only unless allowed for staff on the
+// Capabilities page.
 func (h *SiteHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/site-status", h.handleGetSiteStatus)
-	admin.PUT("/site-status", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUpdateSiteStatus)
+	admin.GET("/site-status", middlewares.RequireCapability(caps.MaintenanceView), h.handleGetSiteStatus)
+	admin.PUT("/site-status", middlewares.RequireCapability(caps.MaintenanceManage), h.handleUpdateSiteStatus)
 }

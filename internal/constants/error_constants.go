@@ -15,6 +15,12 @@ const (
 	FORBIDDEN                  = "You do not have permission to perform this action"
 	USERNAME_ALREADY_EXISTS    = "Username is already taken"
 	EMAIL_ALREADY_EXISTS       = "Email is already used by another panel account"
+	INVALID_USERNAME           = "Use 3 to 50 letters, numbers, dots, dashes or underscores for the username"
+	UNKNOWN_CAPABILITY         = "Unknown capability"
+	PANEL_USER_NOT_FOUND       = "Panel user not found"
+	CANNOT_MANAGE_PANEL_USER   = "You can only change accounts below your own role"
+	ROLE_NOT_ASSIGNABLE        = "You can only give roles below your own"
+	CAPABILITIES_NOT_EDITABLE  = "Super admins and admins always have every capability"
 
 	// Applications
 	APPLICATION_NOT_FOUND        = "Application not found"
@@ -129,6 +135,23 @@ var ErrInvalidAccessToken = errors.New(INVALID_ACCESS_TOKEN)
 
 var ErrUsernameAlreadyExists = errors.New(USERNAME_ALREADY_EXISTS)
 var ErrEmailAlreadyExists = errors.New(EMAIL_ALREADY_EXISTS)
+var ErrInvalidUsername = errors.New(INVALID_USERNAME)
+var ErrUnknownCapability = errors.New(UNKNOWN_CAPABILITY)
+
+// ErrPanelUserNotFound also covers a deleted account.
+var ErrPanelUserNotFound = errors.New(PANEL_USER_NOT_FOUND)
+
+// ErrCannotManagePanelUser: the target's role isn't below the caller's, or
+// it's the caller's own account. See users.CanManage.
+var ErrCannotManagePanelUser = errors.New(CANNOT_MANAGE_PANEL_USER)
+
+// ErrRoleNotAssignable: the caller tried to give a role that isn't below
+// their own. See users.CanAssign.
+var ErrRoleNotAssignable = errors.New(ROLE_NOT_ASSIGNABLE)
+
+// ErrCapabilitiesNotEditable: capabilities are only assigned to managers,
+// supervisors and staff.
+var ErrCapabilitiesNotEditable = errors.New(CAPABILITIES_NOT_EDITABLE)
 
 // ErrApplicationNotFound also covers a malformed id, so ids can't be probed.
 var ErrApplicationNotFound = errors.New(APPLICATION_NOT_FOUND)

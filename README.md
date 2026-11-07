@@ -2,29 +2,42 @@
 
 Go API for the Fairchild admin panel (`../fairchild-admin-panel`). It's a separate service from the member backend `fairchild_be`, but it uses the **same central auth DB** (`fccmpc_coop_auth_central`) and the same structure: gin, repo → service → handler, golang-migrate, the same response envelopes.
 
-Panel users are admins and staff stored in their own table, `users_panel`. They sign in with **username + password**. There's no badge number and no OTP.
+Panel users are stored in their own table, `users_panel`. They sign in with **username + password**. There's no badge number and no OTP.
+
+Roles, highest first: **super_admin > admin > manager > supervisor > staff**.
+- **Super admins and admins** have every capability and open Users and Capabilities.
+- **Managers, supervisors and staff** have only the capabilities assigned to their own account, so two staff can be allowed different things. A new account starts with its role's preset: staff open most pages and enter records, supervisors also review and unlock, managers also send, delete and change portal accounts. Turning the election on or off and maintenance mode are never in a preset.
+- **Who manages whom:** an admin adds and changes only managers, supervisors and staff. A super admin can add and change any account, including other super admins, but never their own. Only super admins and admins manage accounts (`internal/models/users/role_model.go`).
 
 ## Getting started
 
 ```bash
 cp .env.example .env          # fill MySQL creds + ADMIN_JWT_ACCESS_SECRET (openssl rand -hex 32)
 make migrate-up-dev           # creates users_panel & co. in fccmpc_coop_auth_central
-make create-panel-user ENV=dev ARGS="-username admin -first-name First -last-name Admin -role admin"
+make create-panel-user ENV=dev ARGS="-username admin -first-name First -last-name Admin -role super_admin"
 make run-dev                  # http://localhost:8081
 ```
 
-`create-panel-user` prompts for the password, or reads `PANEL_USER_PASSWORD` when that's set. Passwords must be at least 12 characters. There's no sign-up endpoint: panel accounts are only created this way.
+`create-panel-user` prompts for the password, or reads `PANEL_USER_PASSWORD` when that's set. Passwords must be at least 12 characters. It only makes super admins and admins: it's for the first account. Everyone else is added on the panel's System > Users (`POST /admin/users`). There's no sign-up endpoint.
 
 | Command | |
 |---|---|
 | `make run-dev` / `run-staging` / `run-prod` | build + run |
 | `make migrate-up-dev` / `migrate-down-dev` (`-stage`, `migrate-up-prod`) | migrations (the Docker image also runs `up` itself on every start) |
-| `make create-panel-user ENV=dev ARGS="..."` | add an admin/staff account |
+| `make create-panel-user ENV=dev ARGS="..."` | add a super admin or admin account |
 | `make seed-members ENV=dev` | sample rows for an empty `admin_members` (refuses if it has rows) |
 | `make test` | `go test ./...` |
 | `go build ./... && go vet ./...` | compile-check |
 
 ## Endpoints (`/api/v1`)
+
+Every `/admin/*` route needs an active panel account (`RequirePanelAuth`). Most then need a capability (`RequireCapability`).
+- Super admins and admins have every capability.
+- Managers, supervisors and staff have what's assigned to their own account on the panel's System > Capabilities (`panel_user_capabilities`; the catalog and role presets are in `internal/models/capabilities`).
+- An action also needs its page's `.view` capability.
+- An account's capabilities are cached for 10 seconds per instance; a save takes effect at once on the instance that made it.
+
+Users and Capabilities use `RequireAdmin()` (super admins and admins).
 
 | Route | Auth |
 |---|---|
@@ -32,30 +45,35 @@ make run-dev                  # http://localhost:8081
 | `POST /auth/refresh`, `POST /auth/logout` | `admin_refresh_token` cookie |
 | `GET /site/status` | public (fairchild_be serves its own copy to fairchild-fe from the same `site_status` row) |
 | `GET /healthz` | public liveness |
-| `GET /admin/dashboard` | admin, staff |
-| `GET /admin/loan-applications?status=`, `GET /admin/loan-applications/:id`, `PUT /admin/loan-applications/:id/review` | admin, staff |
-| `GET /admin/membership-applications?status=&q=`, `POST /admin/membership-applications`, `GET /admin/membership-applications/:id`, `PUT /admin/membership-applications/:id/review` | admin, staff |
-| `GET /admin/members?category=&branches=&q=&page=&pageSize=`, `GET /admin/members/:id` | admin, staff |
-| `POST /admin/members`, `PUT /admin/members/:id` (panel members only) | admin, staff |
-| `DELETE /admin/members/:id` (panel members only; soft delete) | **admin only** |
-| `GET /admin/members/:id/soa`, `GET /admin/members/:id/soa/:ctrlNo`, `GET /admin/members/:id/standing` (ledger members only; read from that branch ledger's `wkfcsoa`, `sldtl` and `loan`, as fairchild_be does: statements dated in the last 2 months, or else the latest one, and the 12-month coop health score) | admin, staff |
-| `GET /admin/portal-members?status=&branches=&q=&page=&pageSize=`, `GET /admin/portal-members/:id` | admin, staff |
-| `GET /admin/portal-lookup?memberNo=`, `POST /admin/portal-members` (add a ledger member), `PUT /admin/portal-members/:id` `{email, mobileNumber}`, `PUT /admin/portal-members/:id/status` `{status}` (active, pending_review, inactive or suspended; suspended also signs the member out), `DELETE /admin/portal-members/:id` | **admin only** |
-| `GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=` (newest submitted first; `month` YYYY-MM or `year` YYYY filters the submission date), `GET /admin/account-claims/:id` | admin, staff |
-| `PUT /admin/account-claims/:id/approve` (puts the requested email/mobile on the matching portal account, then emails and texts the member on them; returns `{claim, notifications}`), `PUT /admin/account-claims/:id/reject` `{reason, notify}` (records the reason; with `notify`, emails and texts the member on the details already on their account and returns `{claim, notifications}`, otherwise just `{claim}`), `DELETE /admin/account-claims/:id` (approved or rejected claims only) | **admin only** |
-| `GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=` (login locks; `status` is `locked` or `unlocked`; `month` is `YYYY-MM` or `year` is `YYYY`, otherwise the last 3 months; dates are the lock date on `locked` and the unlock date on `unlocked`) | admin, staff |
-| `PUT /admin/locked-accounts/:id/unlock` (then emails and texts the member when the member ID has a portal account; the response says what was sent) | **admin only** |
-| `GET /admin/contact-messages?status=unreplied\|replied&q=&page=&pageSize=`, `GET /admin/contact-messages/:id` | admin, staff |
-| `POST /admin/contact-messages/:id/replies` `{channel: email\|sms, body}` (emails the sender, or texts the portal account with the same email) | **admin only** |
-| `GET /admin/blasts?page=&pageSize=`, `GET /admin/blasts/:id` (with up to 100 undelivered messages) | admin, staff |
-| `POST /admin/blasts/preview` `{channel, statuses, branches}`, `POST /admin/blasts/test` `{channel, subject, emailBody, smsBody, email, mobile}`, `POST /admin/blasts` `{channel, statuses, branches, subject, emailBody, smsBody}`, `PUT /admin/blasts/:id/cancel` | **admin only** |
-| `GET /admin/voters?status=&q=&page=&pageSize=` (`status`: `all` (default), `eligible` = voting, `ineligible` = non-voting), `GET /admin/voters/master-list` (current list + last upload), `GET /admin/voters/stats` (voting / non-voting per ledger branch, plus `none` for members on no ledger), `GET /admin/election-control` | admin, staff |
-| `POST /admin/voters/master-list/check` (multipart `file`: .xlsx or .csv; nothing saved), `PUT /admin/voters/master-list` `{fileName, members: [{memberNo, name}]}` (both only while the election is on; otherwise 409), `POST /admin/voters/master-list/reset` `{password}` (empties the list: everyone non-voting; only while the election is on, otherwise 409), `PUT /admin/election-control` `{enabled, password}` (the admin's own password; wrong = 403 and counts toward the login lockout) | **admin only** |
-| `GET /admin/site-status` | admin, staff |
-| `PUT /admin/site-status` (optional `startsAt` schedules it up to 30 days ahead - members are warned until then; optional `durationMinutes` lifts it on its own, counted from the start; when it starts, now or at `startsAt`, every member session in `auth_sessions` is revoked, by the save or by a 30-second scheduler, once per window via `site_status.signed_out_at`) | **admin only** |
-| `GET /admin/health`, `GET /admin/metrics`, `GET /admin/audit-log` | admin, staff |
-| `GET /admin/account` (the signed-in user's own profile, active sessions, last 10 sign-ins, last 15 actions) | admin, staff |
-| `PUT /admin/account/profile` `{firstName, lastName, email, currentPassword}` (own name and email; email optional, unique among panel accounts), `PUT /admin/account/password` `{currentPassword, newPassword}` (at least 12 characters; signs the user out everywhere). Both confirm with the current password, which counts toward the login lockout when wrong (403), and are audited. | admin, staff |
+| `GET /admin/dashboard` | any panel user |
+| `GET /admin/loan-applications?status=`, `GET /admin/loan-applications/:id`, `PUT /admin/loan-applications/:id/review` | `loans.view`; review: `loans.review` |
+| `GET /admin/membership-applications?status=&q=`, `POST /admin/membership-applications`, `GET /admin/membership-applications/:id`, `PUT /admin/membership-applications/:id/review` | `memberships.view`; POST: `memberships.add`; review: `memberships.review` |
+| `GET /admin/members?category=&branches=&q=&page=&pageSize=`, `GET /admin/members/:id` | `members.view` |
+| `POST /admin/members`, `PUT /admin/members/:id` (panel members only) | `members.edit` |
+| `DELETE /admin/members/:id` (panel members only; soft delete) | `members.delete` |
+| `GET /admin/members/:id/soa`, `GET /admin/members/:id/soa/:ctrlNo`, `GET /admin/members/:id/standing` (ledger members only; read from that branch ledger's `wkfcsoa`, `sldtl` and `loan`, as fairchild_be does: statements dated in the last 2 months, or else the latest one, and the 12-month coop health score) | `members.view` |
+| `GET /admin/portal-members?status=&branches=&q=&page=&pageSize=`, `GET /admin/portal-members/:id` | `portal.view` |
+| `GET /admin/portal-lookup?memberNo=`, `POST /admin/portal-members` (add a ledger member), `PUT /admin/portal-members/:id` `{email, mobileNumber}`, `PUT /admin/portal-members/:id/status` `{status}` (active, pending_review, inactive or suspended; suspended also signs the member out), `DELETE /admin/portal-members/:id` | `portal.manage` |
+| `GET /admin/account-claims?status=&q=&month=&year=&page=&pageSize=` (newest submitted first; `month` YYYY-MM or `year` YYYY filters the submission date), `GET /admin/account-claims/:id` | `claims.view` |
+| `PUT /admin/account-claims/:id/approve` (puts the requested email/mobile on the matching portal account, then emails and texts the member on them; returns `{claim, notifications}`), `PUT /admin/account-claims/:id/reject` `{reason, notify}` (records the reason; with `notify`, emails and texts the member on the details already on their account and returns `{claim, notifications}`, otherwise just `{claim}`), `DELETE /admin/account-claims/:id` (approved or rejected claims only) | `claims.review` |
+| `GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=` (login locks; `status` is `locked` or `unlocked`; `month` is `YYYY-MM` or `year` is `YYYY`, otherwise the last 3 months; dates are the lock date on `locked` and the unlock date on `unlocked`) | `locks.view` |
+| `PUT /admin/locked-accounts/:id/unlock` (then emails and texts the member when the member ID has a portal account; the response says what was sent) | `locks.unlock` |
+| `GET /admin/contact-messages?status=unreplied\|replied&q=&page=&pageSize=`, `GET /admin/contact-messages/:id` | `contact.view` |
+| `POST /admin/contact-messages/:id/replies` `{channel: email\|sms, body}` (emails the sender, or texts the portal account with the same email) | `contact.reply` |
+| `GET /admin/blasts?page=&pageSize=`, `GET /admin/blasts/:id` (with up to 100 undelivered messages) | `blasts.view` |
+| `POST /admin/blasts/preview` `{channel, statuses, branches}`, `POST /admin/blasts/test` `{channel, subject, emailBody, smsBody, email, mobile}`, `POST /admin/blasts` `{channel, statuses, branches, subject, emailBody, smsBody}`, `PUT /admin/blasts/:id/cancel` | `blasts.send` |
+| `GET /admin/voters?status=&q=&page=&pageSize=` (`status`: `all` (default), `eligible` = voting, `ineligible` = non-voting), `GET /admin/voters/master-list` (current list + last upload), `GET /admin/voters/stats` (voting / non-voting per ledger branch, plus `none` for members on no ledger), `GET /admin/election-control` | `/voters`: `election.members.view`; `/voters/master-list`: any election page's view; `/voters/stats`: `election.controller.view`; `/election-control`: any panel user |
+| `POST /admin/voters/master-list/check` (multipart `file`: .xlsx or .csv; nothing saved), `PUT /admin/voters/master-list` `{fileName, members: [{memberNo, name}]}` (both only while the election is on; otherwise 409), `POST /admin/voters/master-list/reset` `{password}` (empties the list: everyone non-voting; only while the election is on, otherwise 409), `PUT /admin/election-control` `{enabled, password}` (the user's own password; wrong = 403 and counts toward the login lockout) | check and upload: `election.masterlist.manage`; reset and `/election-control`: `election.control` |
+| `GET /admin/site-status` | `maintenance.view` |
+| `PUT /admin/site-status` (optional `startsAt` schedules it up to 30 days ahead - members are warned until then; optional `durationMinutes` lifts it on its own, counted from the start; when it starts, now or at `startsAt`, every member session in `auth_sessions` is revoked, by the save or by a 30-second scheduler, once per window via `site_status.signed_out_at`) | `maintenance.manage` |
+| `GET /admin/health`, `GET /admin/metrics`, `GET /admin/audit-log` | `maintenance.view`, `metrics.view`, `audit.view` |
+| `GET /admin/account` (the signed-in user's own profile, active sessions, last 10 sign-ins, last 15 actions) | any panel user |
+| `PUT /admin/account/profile` `{firstName, lastName, email, currentPassword}` (own name and email; email optional, unique among panel accounts), `PUT /admin/account/password` `{currentPassword, newPassword}` (at least 12 characters; signs the user out everywhere). Both confirm with the current password, which counts toward the login lockout when wrong (403), and are audited. | any panel user |
+| `GET /admin/capabilities/mine` (the signed-in user's role and capabilities: every key for a super admin or admin) | any panel user |
+| `GET /admin/capabilities` (the catalog: every capability with `presetFrom`, the lowest role whose preset has it) | **super admin / admin** |
+| `GET /admin/users/:id/capabilities` (an account and its capabilities), `PUT /admin/users/:id/capabilities` `{capabilities: [key]}` (the account's full set. Only for a manager, supervisor or staff account below you, else 403; 400 for an admin. Actions without their page's view key are dropped. Audited with what changed.) | **super admin / admin** |
+| `GET /admin/users` (every non-deleted `users_panel` account, highest role first), `POST /admin/users` `{username, firstName, lastName, email, role, password}` (role below yours, any for a super admin, else 403; username 3-50 of `a-z 0-9 . _ -` after lowercasing; password at least 12 characters; email optional; 409 when the username or email is taken; a manager, supervisor or staff account gets its role's preset; audited) | **super admin / admin** |
+| `PUT /admin/users/:id/role` `{role}`, `PUT /admin/users/:id/status` `{status: active\|suspended}`. Only for an account you outrank, never your own, else 403. Role changes only to a role you could give; the account keeps its assigned capabilities. Suspending revokes its sessions. Both audited. | **super admin / admin** |
 
 Application ids are accepted as `LA-01040` / `MA-00560` or the bare number, member ids as `FC20310` or `20310`, claim ids as `CR-00012` or `12`, lock ids as `LK-00012` or `12`, contact message ids as `CM-00012` or `12`, blast ids as `MB-00012` or `12`.
 
@@ -101,9 +119,10 @@ Each page lists panel members first (newest first), then each selected branch's 
 
 | Table | Owner | Purpose |
 |---|---|---|
-| `users_panel` | this service | admin/staff accounts (`role`: admin \| staff; `status`: active \| suspended \| deleted) |
+| `users_panel` | this service | panel accounts (`role`: super_admin \| admin \| manager \| supervisor \| staff; `status`: active \| suspended \| deleted) |
 | `users_panel_sessions` | this service | refresh sessions (SHA-256 of the token only) |
 | `users_panel_login_audit` | this service | every login attempt; drives lockout |
+| `panel_user_capabilities` | this service | what each manager, supervisor and staff account may see and do (System > Capabilities); one row per capability the account has. Migration 17 replaced the role-wide `panel_staff_capabilities`, copying existing staff's settings and making existing admins super admins. |
 | `admin_audit_logs` | this service | one row per admin mutation, written in the same transaction |
 | `site_status` | this service | single-row maintenance flag, with optional scheduled start (`starts_at`) and end (`ends_at`) |
 | `loan_applications` | this service | online loan applications awaiting review |

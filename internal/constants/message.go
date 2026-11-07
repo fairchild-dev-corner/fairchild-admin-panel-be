@@ -35,4 +35,9 @@ const (
 	AUDIT_SCHEDULED_MAINTENANCE_MODE      = "Scheduled maintenance mode"
 	AUDIT_DISABLED_MAINTENANCE_MODE       = "Disabled maintenance mode"
 	AUDIT_UPDATED_MAINTENANCE_MESSAGE     = "Updated maintenance message"
+	AUDIT_ADDED_PANEL_USER                = "Added panel user"
+	AUDIT_UPDATED_USER_CAPABILITIES       = "Updated user capabilities"
+	AUDIT_CHANGED_PANEL_USER_ROLE         = "Changed panel user role"
+	AUDIT_SUSPENDED_PANEL_USER            = "Suspended panel user"
+	AUDIT_REACTIVATED_PANEL_USER          = "Reactivated panel user"
 )

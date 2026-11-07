@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"slices"
 	"strconv"
@@ -31,17 +32,19 @@ func NewHandler(portalService *service.PortalService) *PortalHandler {
 	return &PortalHandler{portalService: portalService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can view portal accounts; adding one for a ledger member, changing
-// an account's email/mobile or status, or removing it is admin-only.
+// RegisterRoutes mounts onto the already-guarded /admin group. Adding an
+// account for a ledger member, changing an account's email/mobile or status,
+// or removing it is one capability (admins, and staff when allowed on the
+// Capabilities page).
 func (h *PortalHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/portal-members", h.handleList)
-	admin.GET("/portal-lookup", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleLookup)
-	admin.POST("/portal-members", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleAdd)
-	admin.GET("/portal-members/:id", h.handleGet)
-	admin.PUT("/portal-members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUpdateContact)
-	admin.PUT("/portal-members/:id/status", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUpdateStatus)
-	admin.DELETE("/portal-members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleRemove)
+	need := middlewares.RequireCapability
+	admin.GET("/portal-members", need(caps.PortalView), h.handleList)
+	admin.GET("/portal-lookup", need(caps.PortalManage), h.handleLookup)
+	admin.POST("/portal-members", need(caps.PortalManage), h.handleAdd)
+	admin.GET("/portal-members/:id", need(caps.PortalView), h.handleGet)
+	admin.PUT("/portal-members/:id", need(caps.PortalManage), h.handleUpdateContact)
+	admin.PUT("/portal-members/:id/status", need(caps.PortalManage), h.handleUpdateStatus)
+	admin.DELETE("/portal-members/:id", need(caps.PortalManage), h.handleRemove)
 }
 
 // handleList: GET /admin/portal-members?status=&branches=&q=&page=&pageSize=

@@ -4,9 +4,13 @@ const (
 	// status
 	SUCCESS = "success"
 
-	// Panel roles (users_panel.role)
-	ROLE_ADMIN = "admin"
-	ROLE_STAFF = "staff"
+	// Panel roles (users_panel.role), highest first. The hierarchy is in
+	// internal/models/users (role_model.go).
+	ROLE_SUPER_ADMIN = "super_admin"
+	ROLE_ADMIN       = "admin"
+	ROLE_MANAGER     = "manager"
+	ROLE_SUPERVISOR  = "supervisor"
+	ROLE_STAFF       = "staff"
 
 	// Panel account status (users_panel.status)
 	USER_STATUS_ACTIVE    = "active"

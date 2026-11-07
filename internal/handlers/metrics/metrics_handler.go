@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	middlewares "fairchild-admin-panel-be/internal/middlewares"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 
 	service "fairchild-admin-panel-be/internal/services/metrics"
@@ -19,7 +21,7 @@ func NewHandler(metricsService *service.MetricsService) *MetricsHandler {
 
 // RegisterRoutes mounts onto the already-guarded /admin group.
 func (h *MetricsHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/metrics", h.handleGetMetrics)
+	admin.GET("/metrics", middlewares.RequireCapability(caps.MetricsView), h.handleGetMetrics)
 }
 
 // handleGetMetrics: GET /admin/metrics

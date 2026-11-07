@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 
 	cc "fairchild-admin-panel-be/internal/constants"
@@ -20,19 +21,20 @@ func NewHandler(membersService *service.MembersService) *MembersHandler {
 	return &MembersHandler{membersService: membersService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can view, add and edit members; deleting one is admin-only. Ledger
-// members can only be viewed.
+// RegisterRoutes mounts onto the already-guarded /admin group. What staff
+// may see and do here is set on the Capabilities page. Ledger members can
+// only be viewed.
 func (h *MembersHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/members", h.handleListMembers)
-	admin.POST("/members", h.handleCreateMember)
-	admin.GET("/members/:id", h.handleGetMember)
-	admin.PUT("/members/:id", h.handleUpdateMember)
-	admin.DELETE("/members/:id", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleDeleteMember)
+	need := middlewares.RequireCapability
+	admin.GET("/members", need(caps.MembersView), h.handleListMembers)
+	admin.POST("/members", need(caps.MembersEdit), h.handleCreateMember)
+	admin.GET("/members/:id", need(caps.MembersView), h.handleGetMember)
+	admin.PUT("/members/:id", need(caps.MembersEdit), h.handleUpdateMember)
+	admin.DELETE("/members/:id", need(caps.MembersDelete), h.handleDeleteMember)
 	// Read-only views of a ledger member's accounts.
-	admin.GET("/members/:id/soa", h.handleListStatements)
-	admin.GET("/members/:id/soa/:ctrlNo", h.handleGetStatement)
-	admin.GET("/members/:id/standing", h.handleGetStanding)
+	admin.GET("/members/:id/soa", need(caps.MembersView), h.handleListStatements)
+	admin.GET("/members/:id/soa/:ctrlNo", need(caps.MembersView), h.handleGetStatement)
+	admin.GET("/members/:id/standing", need(caps.MembersView), h.handleGetStanding)
 }
 
 func writeMemberError(ctx *gin.Context, err error) {

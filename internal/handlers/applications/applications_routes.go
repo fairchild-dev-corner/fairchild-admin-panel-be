@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	middlewares "fairchild-admin-panel-be/internal/middlewares"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 
 	cc "fairchild-admin-panel-be/internal/constants"
@@ -19,17 +21,18 @@ func NewHandler(applicationsService *service.ApplicationsService) *ApplicationsH
 	return &ApplicationsHandler{applicationsService: applicationsService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Both admin
-// and staff may review applications.
+// RegisterRoutes mounts onto the already-guarded /admin group. What staff
+// may see and do here is set on the Capabilities page.
 func (h *ApplicationsHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/loan-applications", h.handleListLoanApplications)
-	admin.GET("/loan-applications/:id", h.handleGetLoanApplication)
-	admin.PUT("/loan-applications/:id/review", h.handleReviewLoanApplication)
+	need := middlewares.RequireCapability
+	admin.GET("/loan-applications", need(caps.LoansView), h.handleListLoanApplications)
+	admin.GET("/loan-applications/:id", need(caps.LoansView), h.handleGetLoanApplication)
+	admin.PUT("/loan-applications/:id/review", need(caps.LoansReview), h.handleReviewLoanApplication)
 
-	admin.GET("/membership-applications", h.handleListMembershipApplications)
-	admin.POST("/membership-applications", h.handleCreateMembershipApplication)
-	admin.GET("/membership-applications/:id", h.handleGetMembershipApplication)
-	admin.PUT("/membership-applications/:id/review", h.handleReviewMembershipApplication)
+	admin.GET("/membership-applications", need(caps.MembershipsView), h.handleListMembershipApplications)
+	admin.POST("/membership-applications", need(caps.MembershipsAdd), h.handleCreateMembershipApplication)
+	admin.GET("/membership-applications/:id", need(caps.MembershipsView), h.handleGetMembershipApplication)
+	admin.PUT("/membership-applications/:id/review", need(caps.MembershipsReview), h.handleReviewMembershipApplication)
 }
 
 // statusFilter reads ?status=, answering 400 itself for an unknown value.

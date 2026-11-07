@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	middlewares "fairchild-admin-panel-be/internal/middlewares"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	service "fairchild-admin-panel-be/internal/services/health"
 	loggers "fairchild-admin-panel-be/internal/utils/loggers"
 
@@ -15,9 +17,10 @@ func NewHandler(healthService *service.HealthService) *HealthHandler {
 	return &HealthHandler{healthService: healthService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group.
+// RegisterRoutes mounts onto the already-guarded /admin group. Health is
+// shown on the Maintenance page.
 func (h *HealthHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/health", h.handleGetHealth)
+	admin.GET("/health", middlewares.RequireCapability(caps.MaintenanceView), h.handleGetHealth)
 }
 
 // RegisterPublicRoutes mounts an unauthenticated liveness probe for the

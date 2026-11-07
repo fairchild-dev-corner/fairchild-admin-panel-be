@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"slices"
 	"strconv"
@@ -29,21 +30,22 @@ func NewHandler(votersService *service.VotersService) *VotersHandler {
 	return &VotersHandler{votersService: votersService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can see who can vote, the current master list and whether the
-// election is on; uploading a new list (only while it's on) and turning it
-// on or off or resetting everyone to non-voting (both with the admin's
-// password) is admin-only.
+// RegisterRoutes mounts onto the already-guarded /admin group. Uploading a
+// new list (only while the election is on) and turning the election on or
+// off or resetting everyone to non-voting (both with the user's own
+// password) are admins only unless allowed for staff on the Capabilities
+// page. Whether the election is on is open to every panel user: the sidebar
+// reads it.
 func (h *VotersHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	adminOnly := middlewares.RequireRole(cc.ROLE_ADMIN)
-	admin.GET("/voters", h.handleList)
-	admin.GET("/voters/master-list", h.handleSummary)
-	admin.GET("/voters/stats", h.handleStats)
-	admin.POST("/voters/master-list/check", adminOnly, h.handleCheck)
-	admin.PUT("/voters/master-list", adminOnly, h.handleSave)
-	admin.POST("/voters/master-list/reset", adminOnly, h.handleReset)
+	need := middlewares.RequireCapability
+	admin.GET("/voters", need(caps.ElectionMembersView), h.handleList)
+	admin.GET("/voters/master-list", need(caps.ElectionControllerView, caps.ElectionMembersView, caps.MasterListView), h.handleSummary)
+	admin.GET("/voters/stats", need(caps.ElectionControllerView), h.handleStats)
+	admin.POST("/voters/master-list/check", need(caps.MasterListManage), h.handleCheck)
+	admin.PUT("/voters/master-list", need(caps.MasterListManage), h.handleSave)
+	admin.POST("/voters/master-list/reset", need(caps.ElectionControl), h.handleReset)
 	admin.GET("/election-control", h.handleGetControl)
-	admin.PUT("/election-control", adminOnly, h.handleSetControl)
+	admin.PUT("/election-control", need(caps.ElectionControl), h.handleSetControl)
 }
 
 // handleGetControl: GET /admin/election-control

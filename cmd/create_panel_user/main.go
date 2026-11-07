@@ -1,10 +1,11 @@
 package main
 
-// create_panel_user adds an admin or staff account to users_panel. There is
-// no sign-up endpoint on purpose - panel accounts are only ever created by
-// someone with database access, starting with the first admin.
+// create_panel_user adds a super admin or admin account to users_panel. There
+// is no sign-up endpoint on purpose: this command creates the first super
+// admin, who adds everyone else from the panel (System > Users, POST
+// /admin/users), where managers, supervisors and staff get their capabilities.
 //
-//   make create-panel-user ENV=dev ARGS="-username jdelacruz -first-name Juan -last-name 'Dela Cruz' -role admin"
+//   make create-panel-user ENV=dev ARGS="-username jdelacruz -first-name Juan -last-name 'Dela Cruz' -role super_admin"
 //
 // The password is read from PANEL_USER_PASSWORD if set (for scripts),
 // otherwise prompted for twice without echo.
@@ -39,7 +40,7 @@ func main() {
 	firstName := flag.String("first-name", "", "first name (required)")
 	lastName := flag.String("last-name", "", "last name (required)")
 	email := flag.String("email", "", "email (optional)")
-	role := flag.String("role", cc.ROLE_STAFF, "admin or staff")
+	role := flag.String("role", cc.ROLE_SUPER_ADMIN, "super_admin or admin")
 	flag.Parse()
 
 	u := strings.TrimSpace
@@ -51,8 +52,8 @@ func main() {
 	if len(name) > 50 {
 		log.Fatal("username must be at most 50 characters")
 	}
-	if *role != cc.ROLE_ADMIN && *role != cc.ROLE_STAFF {
-		log.Fatalf("role must be %q or %q", cc.ROLE_ADMIN, cc.ROLE_STAFF)
+	if *role != cc.ROLE_SUPER_ADMIN && *role != cc.ROLE_ADMIN {
+		log.Fatalf("role must be %q or %q (add other roles from the panel)", cc.ROLE_SUPER_ADMIN, cc.ROLE_ADMIN)
 	}
 
 	password, err := readPassword()

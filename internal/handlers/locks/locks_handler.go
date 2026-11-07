@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"strconv"
 
@@ -28,12 +29,12 @@ func NewHandler(locksService *service.LocksService) *LocksHandler {
 	return &LocksHandler{locksService: locksService}
 }
 
-// RegisterRoutes mounts onto the already-guarded /admin group. Admin and
-// staff can view locked accounts; unlocking one is admin-only, like the
-// other changes to a portal account.
+// RegisterRoutes mounts onto the already-guarded /admin group. Unlocking is
+// admins only unless allowed for staff on the Capabilities page.
 func (h *LocksHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/locked-accounts", h.handleList)
-	admin.PUT("/locked-accounts/:id/unlock", middlewares.RequireRole(cc.ROLE_ADMIN), h.handleUnlock)
+	need := middlewares.RequireCapability
+	admin.GET("/locked-accounts", need(caps.LocksView), h.handleList)
+	admin.PUT("/locked-accounts/:id/unlock", need(caps.LocksUnlock), h.handleUnlock)
 }
 
 // handleList: GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=

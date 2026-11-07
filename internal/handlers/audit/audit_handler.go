@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	middlewares "fairchild-admin-panel-be/internal/middlewares"
+	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 
 	service "fairchild-admin-panel-be/internal/services/audit"
@@ -19,7 +21,7 @@ func NewHandler(auditService *service.AuditService) *AuditHandler {
 
 // RegisterRoutes mounts onto the already-guarded /admin group.
 func (h *AuditHandler) RegisterRoutes(admin *gin.RouterGroup) {
-	admin.GET("/audit-log", h.handleListAuditLog)
+	admin.GET("/audit-log", middlewares.RequireCapability(caps.AuditView), h.handleListAuditLog)
 }
 
 // handleListAuditLog: GET /admin/audit-log

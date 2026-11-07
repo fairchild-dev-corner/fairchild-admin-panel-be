@@ -10,6 +10,7 @@ import (
 	audit_handler "fairchild-admin-panel-be/internal/handlers/audit"
 	auth_handler "fairchild-admin-panel-be/internal/handlers/auth"
 	blasts_handler "fairchild-admin-panel-be/internal/handlers/blasts"
+	capabilities_handler "fairchild-admin-panel-be/internal/handlers/capabilities"
 	claims_handler "fairchild-admin-panel-be/internal/handlers/claims"
 	contact_handler "fairchild-admin-panel-be/internal/handlers/contact"
 	dashboard_handler "fairchild-admin-panel-be/internal/handlers/dashboard"
@@ -19,6 +20,7 @@ import (
 	metrics_handler "fairchild-admin-panel-be/internal/handlers/metrics"
 	portal_handler "fairchild-admin-panel-be/internal/handlers/portal"
 	site_handler "fairchild-admin-panel-be/internal/handlers/site"
+	users_handler "fairchild-admin-panel-be/internal/handlers/users"
 	voters_handler "fairchild-admin-panel-be/internal/handlers/voters"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	models "fairchild-admin-panel-be/internal/models/config"
@@ -27,6 +29,7 @@ import (
 	audit_repo "fairchild-admin-panel-be/internal/repositories/audit"
 	auth_repo "fairchild-admin-panel-be/internal/repositories/auth"
 	blasts_repo "fairchild-admin-panel-be/internal/repositories/blasts"
+	capabilities_repo "fairchild-admin-panel-be/internal/repositories/capabilities"
 	claims_repo "fairchild-admin-panel-be/internal/repositories/claims"
 	contact_repo "fairchild-admin-panel-be/internal/repositories/contact"
 	dashboard_repo "fairchild-admin-panel-be/internal/repositories/dashboard"
@@ -35,6 +38,7 @@ import (
 	metrics_repo "fairchild-admin-panel-be/internal/repositories/metrics"
 	portal_repo "fairchild-admin-panel-be/internal/repositories/portal"
 	site_repo "fairchild-admin-panel-be/internal/repositories/site"
+	users_repo "fairchild-admin-panel-be/internal/repositories/users"
 	voters_repo "fairchild-admin-panel-be/internal/repositories/voters"
 	router "fairchild-admin-panel-be/internal/routes"
 	account_service "fairchild-admin-panel-be/internal/services/account"
@@ -42,6 +46,7 @@ import (
 	audit_service "fairchild-admin-panel-be/internal/services/audit"
 	auth_service "fairchild-admin-panel-be/internal/services/auth"
 	blasts_service "fairchild-admin-panel-be/internal/services/blasts"
+	capabilities_service "fairchild-admin-panel-be/internal/services/capabilities"
 	claims_service "fairchild-admin-panel-be/internal/services/claims"
 	contact_service "fairchild-admin-panel-be/internal/services/contact"
 	dashboard_service "fairchild-admin-panel-be/internal/services/dashboard"
@@ -52,6 +57,7 @@ import (
 	metrics_service "fairchild-admin-panel-be/internal/services/metrics"
 	portal_service "fairchild-admin-panel-be/internal/services/portal"
 	site_service "fairchild-admin-panel-be/internal/services/site"
+	users_service "fairchild-admin-panel-be/internal/services/users"
 	voters_service "fairchild-admin-panel-be/internal/services/voters"
 	"fairchild-admin-panel-be/pkg/database"
 
@@ -105,10 +111,20 @@ func (s *APIServer) Run() {
 	authHandler := auth_handler.NewHandler(authService, s.hostConf.BuildEnv)
 	authHandler.RegisterRoutes(api)
 
+	// capabilities: what each manager, supervisor and staff account may see
+	// and do, set by super admins and admins (cached; read by
+	// RequireCapability on every guarded route)
+	usersRepo := users_repo.NewUsersRepository(s.mysqlDB)
+	capabilitiesRepo := capabilities_repo.NewCapabilitiesRepository(s.mysqlDB)
+	capabilitiesService := capabilities_service.NewCapabilitiesService(capabilitiesRepo, usersRepo)
+
 	// admin: every route below sits behind RequirePanelAuth, which accepts
-	// only active users_panel accounts (admin or staff). Admin-only routes
-	// add middlewares.RequireRole(cc.ROLE_ADMIN) on top.
-	admin := api.Group("/admin", middlewares.RequirePanelAuth(authService))
+	// only active users_panel accounts. Routes then add
+	// middlewares.RequireCapability (super admins and admins pass; others per
+	// their account's capabilities) or middlewares.RequireAdmin() for the
+	// Users and Capabilities pages.
+	admin := api.Group("/admin", middlewares.RequirePanelAuth(authService), middlewares.WithCapabilities(capabilitiesService.Allows))
+	capabilities_handler.NewHandler(capabilitiesService).RegisterRoutes(admin)
 
 	// dashboard: repo -> service -> handler
 	dashboardRepo := dashboard_repo.NewDashboardRepository(s.mysqlDB, s.branchDBs)
@@ -207,6 +223,10 @@ func (s *APIServer) Run() {
 	accountRepo := account_repo.NewAccountRepository(s.mysqlDB)
 	accountService := account_service.NewAccountService(accountRepo, authService)
 	account_handler.NewHandler(accountService).RegisterRoutes(admin)
+
+	// users: service -> handler (every users_panel account; super admins and
+	// admins add accounts and change the role or status of those below them)
+	users_handler.NewHandler(users_service.NewUsersService(usersRepo)).RegisterRoutes(admin)
 
 	addr := fmt.Sprintf(":%s", s.hostConf.Port)
 	if err := s.server.Run(addr); err != nil {
