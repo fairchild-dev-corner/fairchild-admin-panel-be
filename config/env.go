@@ -70,6 +70,11 @@ type Config struct {
 	BlastTestRecipients  string
 	BlastEmailsPerMinute string
 	BlastSMSPerMinute    string
+
+	// FYRO AI Composer (Marketing Campaign page) drafts blasts with OpenAI.
+	// An unset OPENAI_API_KEY turns it off.
+	OpenAIAPIKey       string
+	BlastComposerModel string
 }
 
 /*Create Singleton*/
@@ -133,6 +138,9 @@ func initConfig() Config {
 		BlastTestRecipients:  getEnv("BLAST_TEST_RECIPIENTS", ""),
 		BlastEmailsPerMinute: getEnv("BLAST_EMAILS_PER_MINUTE", "30"),
 		BlastSMSPerMinute:    getEnv("BLAST_SMS_PER_MINUTE", "60"),
+
+		OpenAIAPIKey:       getEnv("OPENAI_API_KEY", ""),
+		BlastComposerModel: getEnv("BLAST_COMPOSER_MODEL", ""),
 	}
 }
 

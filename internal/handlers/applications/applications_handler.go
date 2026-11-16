@@ -3,6 +3,7 @@ package handlers
 import (
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	models "fairchild-admin-panel-be/internal/models/applications"
+	user_models "fairchild-admin-panel-be/internal/models/users"
 	"fairchild-admin-panel-be/internal/utils"
 	loggers "fairchild-admin-panel-be/internal/utils/loggers"
 
@@ -52,6 +53,48 @@ func (h *ApplicationsHandler) handleReviewLoanApplication(ctx *gin.Context) {
 		return
 	}
 	loggers.SuccessResponse(ctx, app)
+}
+
+// handleMessageLoanApplicant: POST /admin/loan-applications/:id/messages
+// {channel, subject, body} - texts or emails the applicant.
+func (h *ApplicationsHandler) handleMessageLoanApplicant(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	var req models.MessageApplicantRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+
+	result, err := h.applicationsService.MessageLoanApplicant(ctx, ctx.Param("id"), &req, actor)
+	if err != nil {
+		writeApplicationError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, result)
+}
+
+// handleAddLoanApplicationNote: POST /admin/loan-applications/:id/notes
+// {body} - adds a staff note.
+func (h *ApplicationsHandler) handleAddLoanApplicationNote(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	var req models.AddLoanNoteRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+
+	note, err := h.applicationsService.AddLoanApplicationNote(ctx, ctx.Param("id"), &req, actor)
+	if err != nil {
+		writeApplicationError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, note)
 }
 
 // handleListMembershipApplications: GET /admin/membership-applications?status=&q=
@@ -117,4 +160,41 @@ func (h *ApplicationsHandler) handleReviewMembershipApplication(ctx *gin.Context
 		return
 	}
 	loggers.SuccessResponse(ctx, app)
+}
+
+// handleEditLoanApplicationNote: PUT /admin/loan-applications/:id/notes/:noteId
+// {body} - the author rewrites their note.
+func (h *ApplicationsHandler) handleEditLoanApplicationNote(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	var req models.AddLoanNoteRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+
+	note, err := h.applicationsService.EditLoanApplicationNote(ctx, ctx.Param("id"), ctx.Param("noteId"), &req, actor)
+	if err != nil {
+		writeApplicationError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, note)
+}
+
+// handleDeleteLoanApplicationNote: DELETE /admin/loan-applications/:id/notes/:noteId
+// - by the note's author or an admin.
+func (h *ApplicationsHandler) handleDeleteLoanApplicationNote(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	user, _ := middlewares.PanelUserFromContext(ctx)
+
+	if err := h.applicationsService.DeleteLoanApplicationNote(ctx, ctx.Param("id"), ctx.Param("noteId"), actor, user_models.IsAdmin(user.Role)); err != nil {
+		writeApplicationError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, gin.H{"deleted": true})
 }

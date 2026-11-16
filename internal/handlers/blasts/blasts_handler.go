@@ -5,28 +5,37 @@ import (
 	caps "fairchild-admin-panel-be/internal/models/capabilities"
 	"net/http"
 	"strconv"
+	"time"
 
 	cc "fairchild-admin-panel-be/internal/constants"
 	middlewares "fairchild-admin-panel-be/internal/middlewares"
 	models "fairchild-admin-panel-be/internal/models/blasts"
 	service "fairchild-admin-panel-be/internal/services/blasts"
+	composer_service "fairchild-admin-panel-be/internal/services/composer"
 	"fairchild-admin-panel-be/internal/utils"
 	loggers "fairchild-admin-panel-be/internal/utils/loggers"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 )
 
 const (
 	defaultPageSize = 10
 	maxPageSize     = 50
+
+	// Each FYRO AI Composer draft is a paid OpenAI call: a few a minute per
+	// IP is plenty for someone writing a blast.
+	composeRateLimitRefill = 6 * time.Second
+	composeRateLimitBurst  = 5
 )
 
 type BlastsHandler struct {
 	blastsService *service.BlastsService
+	composer      *composer_service.ComposerService // nil = FYRO AI Composer off
 }
 
-func NewHandler(blastsService *service.BlastsService) *BlastsHandler {
-	return &BlastsHandler{blastsService: blastsService}
+func NewHandler(blastsService *service.BlastsService, composer *composer_service.ComposerService) *BlastsHandler {
+	return &BlastsHandler{blastsService: blastsService, composer: composer}
 }
 
 // RegisterRoutes mounts onto the already-guarded /admin group. Sending,
@@ -41,6 +50,33 @@ func (h *BlastsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.POST("/blasts/test", need(caps.BlastsSend), h.handleTest)
 	admin.POST("/blasts", need(caps.BlastsSend), h.handleCreate)
 	admin.PUT("/blasts/:id/cancel", need(caps.BlastsSend), h.handleCancel)
+	composeLimit := middlewares.NewIPRateLimiter(rate.Every(composeRateLimitRefill), composeRateLimitBurst)
+	admin.POST("/blasts/compose", need(caps.BlastsSend), composeLimit.Middleware(), h.handleCompose)
+}
+
+// handleCompose: POST /admin/blasts/compose {channel, theme, details, tone}
+// - FYRO AI Composer's draft {subject, emailBody, smsBody}. Nothing is sent.
+func (h *BlastsHandler) handleCompose(ctx *gin.Context) {
+	if h.composer == nil {
+		loggers.GetCommonError(ctx, cc.COMPOSE_UNAVAILABLE, http.StatusFailedDependency)
+		return
+	}
+	var req models.ComposeBlastRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	draft, err := h.composer.Draft(ctx, &req)
+	switch {
+	case err == nil:
+		loggers.SuccessResponse(ctx, draft)
+	case errors.Is(err, cc.ErrComposeThemeRequired):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, cc.ErrComposeDeclined):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusUnprocessableEntity)
+	default:
+		// 424, not 5xx, so the admin sees why (5xx messages are replaced).
+		loggers.GetCommonError(ctx, err.Error(), http.StatusFailedDependency)
+	}
 }
 
 // handleList: GET /admin/blasts?page=&pageSize=

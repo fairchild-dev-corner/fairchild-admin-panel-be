@@ -22,3 +22,6 @@ go.work.sum
 
 # CA certs
 cert/*.crt
+
+# Automated testing reports
+artifacts/testing/

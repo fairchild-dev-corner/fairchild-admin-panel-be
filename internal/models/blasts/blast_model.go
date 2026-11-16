@@ -202,3 +202,27 @@ type QueuedMessage struct {
 	Recipient string
 	Name      string
 }
+
+// FYRO AI Composer tones.
+const (
+	ToneFriendly = "friendly"
+	ToneFormal   = "formal"
+	ToneUrgent   = "urgent"
+)
+
+// ComposeBlastRequest is the body of POST /admin/blasts/compose: what the
+// blast is about, for FYRO AI Composer to draft. Nothing is sent.
+type ComposeBlastRequest struct {
+	Channel string `json:"channel" validate:"required,oneof=email sms both"`
+	Theme   string `json:"theme" validate:"required,max=300"`
+	Details string `json:"details" validate:"max=1500"`
+	Tone    string `json:"tone" validate:"omitempty,oneof=friendly formal urgent"`
+}
+
+// ComposedBlast is FYRO AI Composer's draft, within the blast limits. Fields
+// the channel doesn't use are empty.
+type ComposedBlast struct {
+	Subject   string `json:"subject"`
+	EmailBody string `json:"emailBody"`
+	SMSBody   string `json:"smsBody"`
+}

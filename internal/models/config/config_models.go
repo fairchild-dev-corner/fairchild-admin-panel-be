@@ -78,6 +78,15 @@ type MessagingConfig struct {
 	SMTP    *SMTPConfig
 	Movider *MoviderConfig
 	Blast   BlastConfig
+	// nil when OPENAI_API_KEY isn't set.
+	Composer *ComposerConfig
+}
+
+// ComposerConfig is FYRO AI Composer's OpenAI API key and model (empty =
+// the default, gpt-4o-mini).
+type ComposerConfig struct {
+	APIKey string
+	Model  string
 }
 
 // BlastConfig paces SMS/email blasts. In test mode (any build but prod)

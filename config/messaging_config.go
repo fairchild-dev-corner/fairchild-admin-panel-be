@@ -40,6 +40,9 @@ func GetMessagingConfig(env string) *models.MessagingConfig {
 			SenderName: strings.TrimSpace(Envs.MoviderSenderName),
 		}
 	}
+	if key := strings.TrimSpace(Envs.OpenAIAPIKey); key != "" {
+		conf.Composer = &models.ComposerConfig{APIKey: key, Model: strings.TrimSpace(Envs.BlastComposerModel)}
+	}
 	return conf
 }
 

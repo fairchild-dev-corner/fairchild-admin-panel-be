@@ -54,6 +54,9 @@ func main() {
 	if messagingConf.Movider == nil {
 		slog.Warn("Movider not configured - text replies to contact messages are disabled")
 	}
+	if messagingConf.Composer == nil {
+		slog.Warn("OPENAI_API_KEY not set - FYRO AI Composer (blast drafts) is disabled")
+	}
 	if messagingConf.Blast.TestMode {
 		slog.Warn("blasts are in test mode - only BLAST_TEST_RECIPIENTS are messaged", "allowed", len(messagingConf.Blast.TestRecipients))
 	}

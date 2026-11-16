@@ -69,3 +69,19 @@ test:
 # make run-dev
 # make migrate-up-dev
 # make create-panel-user ENV=dev ARGS="-username admin -first-name First -last-name Admin -role admin"
+
+.PHONY: test-all test-unit test-performance test-security test-fuzz
+test-all:
+	@go run ./cmd/testsuite
+
+test-unit:
+	@go run ./cmd/testsuite -suite unit
+
+test-performance:
+	@go run ./cmd/testsuite -suite performance
+
+test-security:
+	@go run ./cmd/testsuite -suite security
+
+test-fuzz:
+	@go run ./cmd/testsuite -suite fuzz

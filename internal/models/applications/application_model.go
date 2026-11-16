@@ -30,6 +30,79 @@ type LoanApplication struct {
 	ReviewedAt  *time.Time `json:"reviewedAt,omitempty"`
 	ReviewedBy  string     `json:"reviewedBy,omitempty"`
 	ReviewNote  string     `json:"reviewNote,omitempty"`
+	// Only on GET /admin/loan-applications/:id: the applicant's portal
+	// account (when one matches) and their other applications, newest first.
+	Applicant *LoanApplicant    `json:"applicant,omitempty"`
+	History   []LoanApplication `json:"history,omitempty"`
+	// Which ways of messaging the applicant are configured on the server.
+	MessageChannels *MessageChannels `json:"messageChannels,omitempty"`
+	// Staff notes, oldest first (detail page only).
+	Notes []LoanApplicationNote `json:"notes,omitempty"`
+}
+
+// LoanApplicationNote is one staff note on a loan application. Body keeps
+// the author's **bold**, *italic* and __underline__ markers. AuthorID is
+// the author's panel account uuid (empty once that account is removed), so
+// the panel can tell the signed-in user's own notes; EditedAt is set once
+// the author edits it.
+type LoanApplicationNote struct {
+	ID        string     `json:"id"`
+	AuthorID  string     `json:"authorId,omitempty"`
+	Author    string     `json:"author"`
+	Body      string     `json:"body"`
+	CreatedAt time.Time  `json:"createdAt"`
+	EditedAt  *time.Time `json:"editedAt,omitempty"`
+	// The author's panel account id; not sent.
+	AuthorPanelID int64 `json:"-"`
+}
+
+// MaxNoteLength caps one note's body (characters).
+const MaxNoteLength = 2000
+
+// AddLoanNoteRequest is the body of POST /admin/loan-applications/:id/notes
+// and of PUT /admin/loan-applications/:id/notes/:noteId.
+type AddLoanNoteRequest struct {
+	Body string `json:"body" validate:"required,max=2000"`
+}
+
+// MessageChannels says whether email (SMTP) and text (Movider) are set up.
+type MessageChannels struct {
+	Email bool `json:"email"`
+	SMS   bool `json:"sms"`
+}
+
+// Messaging a loan applicant.
+const (
+	MessageChannelEmail = "email"
+	MessageChannelSMS   = "sms"
+	MaxSMSMessageLength = 480
+)
+
+// MessageApplicantRequest is the body of POST
+// /admin/loan-applications/:id/messages. Subject is for email only; a blank
+// one gets a default.
+type MessageApplicantRequest struct {
+	Channel string `json:"channel" validate:"required,oneof=email sms"`
+	Subject string `json:"subject" validate:"max=150"`
+	Body    string `json:"body" validate:"required,max=2000"`
+}
+
+// MessageApplicantResult says where the message went.
+type MessageApplicantResult struct {
+	Channel   string `json:"channel"`
+	Recipient string `json:"recipient"`
+}
+
+// LoanApplicant is the applicant's portal account (fairchild_be's users,
+// read only), matched by the application's user id or else its member
+// number. MembershipDate is YYYY-MM-DD.
+type LoanApplicant struct {
+	AccountID      string `json:"accountId"`
+	Email          string `json:"email,omitempty"`
+	MobileNumber   string `json:"mobileNumber,omitempty"`
+	Address        string `json:"address,omitempty"`
+	MemberType     string `json:"memberType,omitempty"`
+	MembershipDate string `json:"membershipDate,omitempty"`
 }
 
 // MembershipApplication matches MembershipApplication in the admin panel.

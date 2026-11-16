@@ -14,6 +14,8 @@ import (
 	audit_repo "fairchild-admin-panel-be/internal/repositories/audit"
 	"fairchild-admin-panel-be/internal/utils"
 	"fairchild-admin-panel-be/pkg/database"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 /**
@@ -22,7 +24,8 @@ import (
 * upload log `voter_master_list_uploads`), owned by this service, joined to
 * fairchild_be's `users` (read only) to say which members can vote. An
 * upload replaces the whole list and writes its audit entry in the same
-* transaction.
+* transaction. Also marks, undoes and resets members' election token claims
+* in fairchild_be's `voter_token_claims` (the portal records claims there).
 **/
 type VotersRepository struct {
 	DB *sql.DB
@@ -65,8 +68,9 @@ func (r *VotersRepository) Summary(ctx context.Context) (*models.MasterListSumma
 	err := r.DB.QueryRowContext(ctx,
 		`SELECT (SELECT COUNT(*) FROM voter_master_list),
 		        (SELECT COUNT(*) FROM voter_master_list m JOIN users u ON u.id = m.user_id
-		         WHERE u.status = 'active' AND u.deleted_at IS NULL)`,
-	).Scan(&s.Count, &s.Eligible)
+		         WHERE m.is_voting AND `+liveAccount+`),
+		        (SELECT COUNT(*) FROM voter_master_list WHERE NOT is_voting)`,
+	).Scan(&s.Count, &s.Eligible, &s.NonVoting)
 	if err != nil {
 		return nil, err
 	}
@@ -94,13 +98,15 @@ func (r *VotersRepository) ReplaceMasterList(ctx context.Context, fileName strin
 		}
 		for start := 0; start < len(members); start += masterListChunk {
 			chunk := members[start:min(len(members), start+masterListChunk)]
-			args := make([]any, 0, len(chunk)*3)
+			args := make([]any, 0, len(chunk)*7)
 			for _, m := range chunk {
-				args = append(args, m.UserID, m.MemberNo, m.ListedName)
+				args = append(args, m.UserID, m.MemberNo, m.ListedName, m.Voting, m.Attendance, m.Survey, m.LuckyPick)
 			}
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO voter_master_list (user_id, member_no, listed_name) VALUES (?, ?, ?)`+
-					strings.Repeat(", (?, ?, ?)", len(chunk)-1),
+				`INSERT INTO voter_master_list
+				 (user_id, member_no, listed_name, is_voting, attendance_token, survey_token, lucky_pick_token)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`+
+					strings.Repeat(", (?, ?, ?, ?, ?, ?, ?)", len(chunk)-1),
 				args...); err != nil {
 				return err
 			}
@@ -119,20 +125,57 @@ func (r *VotersRepository) ReplaceMasterList(ctx context.Context, fileName strin
 	})
 }
 
+// accountName is a portal account's name as "Last, First Middle Suffix".
+const accountName = `CONCAT_WS(', ', NULLIF(TRIM(u.last_name), ''),
+	                 NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.middle_name, u.suffix)), ''))`
+
+// SetVoting puts one live portal account on the master list as voting or
+// non-voting (adding it if it isn't listed) and audits it in the same
+// transaction.
+func (r *VotersRepository) SetVoting(ctx context.Context, userID int64, voting bool, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		var memberNo, name string
+		err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(TRIM(u.member_id), ''), COALESCE(`+accountName+`, '')
+			 FROM users u WHERE u.id = ? AND `+liveAccount,
+			userID).Scan(&memberNo, &name)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cc.ErrPortalMemberNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if memberNo == "" {
+			return &cc.MasterListInputError{Msg: "This portal account has no member ID, so it can't be on the master list"}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO voter_master_list (user_id, member_no, listed_name, is_voting) VALUES (?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE is_voting = VALUES(is_voting)`,
+			userID, memberNo, name, voting); err != nil {
+			return err
+		}
+		audit.Target = memberNo
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+}
+
 // votersFrom is every live portal account, marked with whether it's on the
 // master list, plus listed members whose account has since been removed.
-// can_vote: on the list with an active account.
+// can_vote: on the list as voting, whatever the account's status (active,
+// inactive, suspended or pending review). token_total: their election
+// tokens, which only voting members get.
 const votersFrom = `(
 	SELECT COALESCE(TRIM(u.member_id), '') AS member_no,
-	       CONCAT_WS(', ', NULLIF(TRIM(u.last_name), ''),
-	                 NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.middle_name, u.suffix)), '')) AS name,
+	       ` + accountName + ` AS name,
 	       u.id AS user_id, u.status AS account_status, m.id IS NOT NULL AS on_list,
-	       (m.id IS NOT NULL AND u.status = 'active') AS can_vote
+	       COALESCE(m.is_voting, FALSE) AS listed_voting,
+	       (m.id IS NOT NULL AND m.is_voting) AS can_vote,
+	       COALESCE(CASE WHEN m.is_voting THEN ` + tokenTotal + ` END, 0) AS token_total
 	FROM users u
 	LEFT JOIN voter_master_list m ON m.user_id = u.id
 	WHERE ` + liveAccount + `
 	UNION ALL
-	SELECT m.member_no, m.listed_name, m.user_id, NULL, TRUE, FALSE
+	SELECT m.member_no, m.listed_name, m.user_id, NULL, TRUE, m.is_voting, FALSE, 0
 	FROM voter_master_list m
 	LEFT JOIN users u ON u.id = m.user_id AND ` + liveAccount + `
 	WHERE u.id IS NULL
@@ -170,7 +213,8 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 
 	rows, err := r.DB.QueryContext(ctx,
-		`SELECT x.member_no, COALESCE(x.name, ''), x.user_id, COALESCE(x.account_status, ''), x.on_list, x.can_vote
+		`SELECT x.member_no, COALESCE(x.name, ''), x.user_id, COALESCE(x.account_status, ''), x.on_list, x.listed_voting, x.can_vote,
+		        x.token_total
 		 FROM `+votersFrom+`
 		 WHERE `+where+`
 		 ORDER BY x.on_list DESC, COALESCE(x.name, '') = '', x.name, x.member_no
@@ -182,26 +226,166 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 	defer rows.Close()
 
 	voters := make([]models.Voter, 0, q.PageSize)
+	userIDs := make([]int64, 0, q.PageSize)
 	for rows.Next() {
 		var v models.Voter
 		var userID int64
-		if err := rows.Scan(&v.MemberNo, &v.Name, &userID, &v.AccountStatus, &v.OnMasterList, &v.CanVote); err != nil {
+		if err := rows.Scan(&v.MemberNo, &v.Name, &userID, &v.AccountStatus, &v.OnMasterList, &v.ListedVoting, &v.CanVote,
+			&v.TokenTotal); err != nil {
 			return nil, err
 		}
+		userIDs = append(userIDs, userID)
 		switch {
 		case v.AccountStatus == "":
 			v.Reason = models.ReasonNoAccount
 		case !v.OnMasterList:
 			v.Reason = models.ReasonNotListed
-		case !v.CanVote:
-			v.Reason = models.ReasonAccountInactive
+		case !v.ListedVoting:
+			v.Reason = models.ReasonListedNonVoting
 		}
 		if v.AccountStatus != "" {
 			v.AccountID = app_models.FormatID(cc.PORTAL_MEMBER_ID_PREFIX, userID)
 		}
 		voters = append(voters, v)
 	}
-	return voters, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	claimed, err := r.claimedUsers(ctx, q.ClaimYear, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range voters {
+		voters[i].TokenClaimed = claimed[userIDs[i]]
+	}
+	return voters, nil
+}
+
+// tokenTotal is a master list row's election tokens in pesos.
+const tokenTotal = `(m.attendance_token + m.survey_token + m.lucky_pick_token)`
+
+// claimsTableMissing: voter_token_claims is created by fairchild_be's
+// migrations. Until they've run, read it as having no claims rather than
+// breaking the Members List.
+func claimsTableMissing(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+}
+
+// claimedUsers reports which of userIDs have claimed their tokens in year.
+func (r *VotersRepository) claimedUsers(ctx context.Context, year int, userIDs []int64) (map[int64]bool, error) {
+	claimed := map[int64]bool{}
+	if len(userIDs) == 0 {
+		return claimed, nil
+	}
+	args := []any{year}
+	for _, id := range userIDs {
+		args = append(args, id)
+	}
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT user_id FROM voter_token_claims WHERE claim_year = ? AND user_id IN (?`+
+			strings.Repeat(", ?", len(userIDs)-1)+`)`,
+		args...)
+	if claimsTableMissing(err) {
+		return claimed, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		claimed[id] = true
+	}
+	return claimed, rows.Err()
+}
+
+// SetTokenClaim records the member's election token claim for year with the
+// amounts on the master list (e.g. paid out at the branch), or removes it,
+// and audits it in the same transaction. Already in that state: nothing
+// changes and nothing is audited.
+func (r *VotersRepository) SetTokenClaim(ctx context.Context, userID int64, year int, claimed bool, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		var memberNo string
+		var canVote bool
+		var tokens models.Tokens
+		err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(TRIM(u.member_id), ''), COALESCE(m.is_voting, FALSE),
+			        COALESCE(m.attendance_token, 0), COALESCE(m.survey_token, 0), COALESCE(m.lucky_pick_token, 0)
+			 FROM users u LEFT JOIN voter_master_list m ON m.user_id = u.id
+			 WHERE u.id = ? AND `+liveAccount,
+			userID).Scan(&memberNo, &canVote, &tokens.Attendance, &tokens.Survey, &tokens.LuckyPick)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cc.ErrPortalMemberNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		var res sql.Result
+		if claimed {
+			// Tokens are for voting members only, as on the portal.
+			if !canVote {
+				return &cc.MasterListInputError{Msg: "Only voting members can claim election tokens"}
+			}
+			if tokens.Attendance+tokens.Survey+tokens.LuckyPick <= 0 {
+				return &cc.MasterListInputError{Msg: "This member has no election tokens on the master list"}
+			}
+			res, err = tx.ExecContext(ctx,
+				`INSERT IGNORE INTO voter_token_claims (user_id, claim_year, attendance_amount, survey_amount, lucky_pick_amount)
+				 VALUES (?, ?, ?, ?, ?)`,
+				userID, year, tokens.Attendance, tokens.Survey, tokens.LuckyPick)
+		} else {
+			res, err = tx.ExecContext(ctx,
+				`DELETE FROM voter_token_claims WHERE user_id = ? AND claim_year = ?`, userID, year)
+		}
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		audit.Target = memberNo
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+}
+
+// TokenClaimsSummary counts the token claims on record, every year.
+func (r *VotersRepository) TokenClaimsSummary(ctx context.Context) (*models.TokenClaimsSummary, error) {
+	var s models.TokenClaimsSummary
+	err := r.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(attendance_amount + survey_amount + lucky_pick_amount), 0) FROM voter_token_claims`,
+	).Scan(&s.Claimed, &s.Total)
+	if claimsTableMissing(err) {
+		return &models.TokenClaimsSummary{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// ClearTokenClaims deletes every token claim, so members can claim again at
+// the next election, and audits it in the same transaction. Returns how many
+// were cleared.
+func (r *VotersRepository) ClearTokenClaims(ctx context.Context, audit *audit_models.AuditLog) (int64, error) {
+	var cleared int64
+	err := database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM voter_token_claims`)
+		if err != nil {
+			return err
+		}
+		if cleared, err = res.RowsAffected(); err != nil {
+			return err
+		}
+		audit.Target = "election token claims"
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+	return cleared, err
 }
 
 func (r *VotersRepository) GetElectionControl(ctx context.Context) (*models.ElectionControl, error) {
@@ -262,7 +446,7 @@ func (r *VotersRepository) ClearMasterList(ctx context.Context, audit *audit_mod
 func (r *VotersRepository) VoterStatuses(ctx context.Context) ([]models.VoterStatus, error) {
 	rows, err := r.DB.QueryContext(ctx,
 		`SELECT COALESCE(TRIM(u.member_id), ''), COALESCE(TRIM(u.user_client_id), ''),
-		        m.id IS NOT NULL AND u.status = 'active'
+		        m.id IS NOT NULL AND m.is_voting
 		 FROM users u
 		 LEFT JOIN voter_master_list m ON m.user_id = u.id
 		 WHERE `+liveAccount+`

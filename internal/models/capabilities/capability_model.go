@@ -40,6 +40,7 @@ const (
 	ElectionMembersView    = "election.members.view"
 	MasterListView         = "election.masterlist.view"
 	MasterListManage       = "election.masterlist.manage"
+	ElectionAuditView      = "election.audit.view"
 
 	MaintenanceView   = "maintenance.view"
 	MaintenanceManage = "maintenance.manage"
@@ -104,6 +105,7 @@ var Catalog = []Capability{
 	{ElectionMembersView, "Election", "Members List", "View page", "See which members can vote.", true, staff},
 	{MasterListView, "Election", "Generate Master List", "View page", "See the current voters' master list.", true, supervisor},
 	{MasterListManage, "Election", "Generate Master List", "Upload", "Upload a new voters' master list.", false, manager},
+	{ElectionAuditView, "Election", "Audit Log", "View page", "See who changed what on the Election pages, and when.", true, manager},
 
 	{MaintenanceView, "System", "Maintenance", "View page", "See maintenance mode and service health.", true, manager},
 	{MaintenanceManage, "System", "Maintenance", "Turn on or off", "Put the member portal into maintenance, which signs every member out.", false, byHand},

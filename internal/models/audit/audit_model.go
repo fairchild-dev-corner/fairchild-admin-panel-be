@@ -32,10 +32,32 @@ type AuditLog struct {
 }
 
 // AuditLogEntry matches AuditLogEntry in the admin panel (src/models/admin.ts).
+// IPAddress is only filled on the Election audit log.
 type AuditLogEntry struct {
-	ID     string    `json:"id"`
-	Actor  string    `json:"actor"`
-	Action string    `json:"action"`
-	Target string    `json:"target"`
-	At     time.Time `json:"at"`
+	ID        string    `json:"id"`
+	Actor     string    `json:"actor"`
+	Action    string    `json:"action"`
+	Target    string    `json:"target"`
+	IPAddress string    `json:"ipAddress,omitempty"`
+	At        time.Time `json:"at"`
+}
+
+// AuditLogQuery pages audit entries limited to Actions, optionally to one
+// Action, and matching Search in the actor or target.
+type AuditLogQuery struct {
+	Actions  []string
+	Action   string
+	Search   string
+	Page     int
+	PageSize int
+}
+
+// ElectionAuditPage is GET /admin/election/audit-log, matching
+// ElectionAuditPage in the panel. Actions are the filter's choices.
+type ElectionAuditPage struct {
+	Items    []AuditLogEntry `json:"items"`
+	Total    int             `json:"total"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"pageSize"`
+	Actions  []string        `json:"actions"`
 }

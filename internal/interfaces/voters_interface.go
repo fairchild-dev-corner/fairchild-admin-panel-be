@@ -23,6 +23,14 @@ type VotersRepositoryInterface interface {
 	// The election on/off switch (`election_control`, a single row).
 	GetElectionControl(ctx context.Context) (*models.ElectionControl, error)
 	SetElectionControl(ctx context.Context, enabled bool, byID int64, by string, audit *audit_models.AuditLog) error
+	// Puts one live portal account on the master list as voting or non-voting.
+	SetVoting(ctx context.Context, userID int64, voting bool, audit *audit_models.AuditLog) error
+	// Records (or removes) one member's election token claim for year in
+	// fairchild_be's voter_token_claims.
+	SetTokenClaim(ctx context.Context, userID int64, year int, claimed bool, audit *audit_models.AuditLog) error
+	TokenClaimsSummary(ctx context.Context) (*models.TokenClaimsSummary, error)
+	// Deletes every token claim; returns how many there were.
+	ClearTokenClaims(ctx context.Context, audit *audit_models.AuditLog) (int64, error)
 	// Empties the master list (everyone non-voting); returns how many were on it.
 	ClearMasterList(ctx context.Context, audit *audit_models.AuditLog) (int64, error)
 }

@@ -53,6 +53,12 @@ const (
 	BLAST_SMS_UNAVAILABLE    = "Texting isn't set up on the server, so it can't send SMS blasts"
 	BLAST_TEST_ADDRESS       = "Enter a valid email address and/or PH mobile number to send the test to"
 	BLAST_TEST_SEND_FAILED   = "The test message couldn't be sent. Check the server log for the provider's error"
+	COMPOSE_THEME_REQUIRED   = "Describe what the message is about"
+	COMPOSE_UNAVAILABLE      = "FYRO AI Composer isn't set up. Add OPENAI_API_KEY to the admin backend's .env"
+	COMPOSE_BUSY             = "FYRO AI Composer is busy right now. Please try again in a moment"
+	COMPOSE_NO_CREDIT        = "FYRO AI Composer's OpenAI account is out of credit. Add billing credit at platform.openai.com"
+	COMPOSE_FAILED           = "FYRO AI Composer couldn't write a draft. Please try again"
+	COMPOSE_DECLINED         = "FYRO AI Composer can't write this message. Try describing it differently"
 	// Recorded on recipients that were never sent.
 	BLAST_SKIPPED_TEST_MODE   = "Test mode: not on BLAST_TEST_RECIPIENTS"
 	BLAST_SKIPPED_CANCELLED   = "Blast cancelled before this was sent"
@@ -82,6 +88,19 @@ const (
 	REPLY_SEND_FAILED         = "The reply couldn't be sent. Please try again in a moment"
 	REPLY_SENT_NOT_RECORDED   = "The reply was sent, but couldn't be saved to the message history"
 
+	// Texting or emailing a loan applicant
+	MESSAGE_EMAIL_UNAVAILABLE = "Email isn't set up. Add the SMTP settings to the admin backend's .env"
+	MESSAGE_SMS_UNAVAILABLE   = "Text messages aren't set up. Add the Movider settings to the admin backend's .env"
+	APPLICANT_NO_EMAIL        = "This member has no valid email address on their portal account"
+	APPLICANT_NO_MOBILE       = "This member has no valid mobile number on their portal account"
+	MESSAGE_EMPTY             = "Write a message before sending"
+	MESSAGE_TOO_LONG_FOR_SMS  = "Text messages can be at most 480 characters"
+	MESSAGE_SEND_FAILED       = "The message couldn't be sent. Please try again in a moment"
+	NOTE_EMPTY                = "Write a note before adding it"
+	NOTE_NOT_FOUND            = "Note not found"
+	NOTE_EDIT_FORBIDDEN       = "Only the note's author can edit it"
+	NOTE_DELETE_FORBIDDEN     = "Only the note's author or an admin can delete it"
+
 	// Generic
 	INVALID_PAYLOAD = "invalid payload"
 )
@@ -98,6 +117,18 @@ var (
 	ErrReplyTooLongForSMS     = errors.New(REPLY_TOO_LONG_FOR_SMS)
 	ErrReplySendFailed        = errors.New(REPLY_SEND_FAILED)
 	ErrReplySentNotRecorded   = errors.New(REPLY_SENT_NOT_RECORDED)
+
+	ErrMessageEmailUnavailable = errors.New(MESSAGE_EMAIL_UNAVAILABLE)
+	ErrMessageSMSUnavailable   = errors.New(MESSAGE_SMS_UNAVAILABLE)
+	ErrApplicantNoEmail        = errors.New(APPLICANT_NO_EMAIL)
+	ErrApplicantNoMobile       = errors.New(APPLICANT_NO_MOBILE)
+	ErrMessageEmpty            = errors.New(MESSAGE_EMPTY)
+	ErrMessageTooLongForSMS    = errors.New(MESSAGE_TOO_LONG_FOR_SMS)
+	ErrMessageSendFailed       = errors.New(MESSAGE_SEND_FAILED)
+	ErrNoteEmpty               = errors.New(NOTE_EMPTY)
+	ErrNoteNotFound            = errors.New(NOTE_NOT_FOUND)
+	ErrNoteEditForbidden       = errors.New(NOTE_EDIT_FORBIDDEN)
+	ErrNoteDeleteForbidden     = errors.New(NOTE_DELETE_FORBIDDEN)
 )
 
 // ErrInvalidCredentials covers both an unknown username and a wrong
@@ -216,6 +247,17 @@ var ErrBlastTestAddress = errors.New(BLAST_TEST_ADDRESS)
 
 // ErrBlastTestSendFailed: the provider refused the test message.
 var ErrBlastTestSendFailed = errors.New(BLAST_TEST_SEND_FAILED)
+
+// FYRO AI Composer (POST /admin/blasts/compose). Declined: the model
+// wouldn't write it (422); the rest are the provider failing (424).
+var (
+	ErrComposeThemeRequired = errors.New(COMPOSE_THEME_REQUIRED)
+	ErrComposeUnavailable   = errors.New(COMPOSE_UNAVAILABLE)
+	ErrComposeBusy          = errors.New(COMPOSE_BUSY)
+	ErrComposeNoCredit      = errors.New(COMPOSE_NO_CREDIT)
+	ErrComposeFailed        = errors.New(COMPOSE_FAILED)
+	ErrComposeDeclined      = errors.New(COMPOSE_DECLINED)
+)
 
 // ErrBlastInvalid is matched (via errors.Is) by every BlastInputError - a
 // draft or audience the admin needs to fix. Its message says what.

@@ -28,6 +28,12 @@ func (h *ApplicationsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/loan-applications", need(caps.LoansView), h.handleListLoanApplications)
 	admin.GET("/loan-applications/:id", need(caps.LoansView), h.handleGetLoanApplication)
 	admin.PUT("/loan-applications/:id/review", need(caps.LoansReview), h.handleReviewLoanApplication)
+	admin.POST("/loan-applications/:id/messages", need(caps.LoansReview), h.handleMessageLoanApplicant)
+	// Anyone who can see loan applications can add a note to one.
+	admin.POST("/loan-applications/:id/notes", need(caps.LoansView), h.handleAddLoanApplicationNote)
+	// Editing is the author's; deleting the author's or an admin's (checked in the service).
+	admin.PUT("/loan-applications/:id/notes/:noteId", need(caps.LoansView), h.handleEditLoanApplicationNote)
+	admin.DELETE("/loan-applications/:id/notes/:noteId", need(caps.LoansView), h.handleDeleteLoanApplicationNote)
 
 	admin.GET("/membership-applications", need(caps.MembershipsView), h.handleListMembershipApplications)
 	admin.POST("/membership-applications", need(caps.MembershipsAdd), h.handleCreateMembershipApplication)
@@ -51,15 +57,26 @@ func statusFilter(ctx *gin.Context) (string, bool) {
 
 func writeApplicationError(ctx *gin.Context, err error) {
 	switch {
-	case errors.Is(err, cc.ErrApplicationNotFound):
+	case errors.Is(err, cc.ErrApplicationNotFound), errors.Is(err, cc.ErrNoteNotFound):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusNotFound)
 	case errors.Is(err, cc.ErrApplicationAlreadyReviewed):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusConflict)
 	case errors.Is(err, cc.ErrInvalidPayload),
 		errors.Is(err, cc.ErrDateOfBirthInFuture),
 		errors.Is(err, cc.ErrInvalidMobileNumber),
-		errors.Is(err, cc.ErrCoopApplicantIncomplete):
+		errors.Is(err, cc.ErrCoopApplicantIncomplete),
+		errors.Is(err, cc.ErrMessageEmailUnavailable),
+		errors.Is(err, cc.ErrMessageSMSUnavailable),
+		errors.Is(err, cc.ErrApplicantNoEmail),
+		errors.Is(err, cc.ErrApplicantNoMobile),
+		errors.Is(err, cc.ErrMessageEmpty),
+		errors.Is(err, cc.ErrMessageTooLongForSMS),
+		errors.Is(err, cc.ErrNoteEmpty):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, cc.ErrNoteEditForbidden), errors.Is(err, cc.ErrNoteDeleteForbidden):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusForbidden)
+	case errors.Is(err, cc.ErrMessageSendFailed):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusFailedDependency)
 	default:
 		loggers.GetCommonError(ctx, err.Error(), http.StatusInternalServerError)
 	}

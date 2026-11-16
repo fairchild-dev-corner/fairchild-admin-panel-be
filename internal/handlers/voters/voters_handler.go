@@ -43,6 +43,10 @@ func (h *VotersHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/voters/stats", need(caps.ElectionControllerView), h.handleStats)
 	admin.POST("/voters/master-list/check", need(caps.MasterListManage), h.handleCheck)
 	admin.PUT("/voters/master-list", need(caps.MasterListManage), h.handleSave)
+	admin.PUT("/voters/:accountId/voting", need(caps.MasterListManage), h.handleSetVoting)
+	admin.GET("/voters/token-claims", need(caps.ElectionControllerView, caps.ElectionMembersView), h.handleTokenClaims)
+	admin.PUT("/voters/:accountId/token-claim", need(caps.MasterListManage), h.handleSetTokenClaim)
+	admin.POST("/voters/token-claims/reset", need(caps.ElectionControl), h.handleResetTokenClaims)
 	admin.POST("/voters/master-list/reset", need(caps.ElectionControl), h.handleReset)
 	admin.GET("/election-control", h.handleGetControl)
 	admin.PUT("/election-control", need(caps.ElectionControl), h.handleSetControl)
@@ -149,10 +153,79 @@ func (h *VotersHandler) handleSave(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, s)
 }
 
+// handleSetVoting: PUT /admin/voters/:accountId/voting {voting} - puts the
+// member on the master list as voting or non-voting.
+func (h *VotersHandler) handleSetVoting(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	var req models.SetVotingRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	s, err := h.votersService.SetVoting(ctx, ctx.Param("accountId"), *req.Voting, actor)
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, s)
+}
+
+// handleTokenClaims: GET /admin/voters/token-claims
+func (h *VotersHandler) handleTokenClaims(ctx *gin.Context) {
+	s, err := h.votersService.TokenClaims(ctx)
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, s)
+}
+
+// handleSetTokenClaim: PUT /admin/voters/:accountId/token-claim {claimed} -
+// marks the member's election tokens claimed this year, or undoes it.
+func (h *VotersHandler) handleSetTokenClaim(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	var req models.SetTokenClaimRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	s, err := h.votersService.SetTokenClaim(ctx, ctx.Param("accountId"), *req.Claimed, actor)
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, s)
+}
+
+// handleResetTokenClaims: POST /admin/voters/token-claims/reset {password} -
+// every member can claim their tokens again.
+func (h *VotersHandler) handleResetTokenClaims(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	var req models.ResetTokenClaimsRequest
+	if !utils.ValidatePayload(ctx, &req) {
+		return
+	}
+	s, err := h.votersService.ResetTokenClaims(ctx, &req, actor, ctx.Request.UserAgent())
+	if err != nil {
+		writeVoterError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, s)
+}
+
 func writeVoterError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, cc.ErrMasterListInvalid):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, cc.ErrPortalMemberNotFound):
+		loggers.GetCommonError(ctx, err.Error(), http.StatusNotFound)
 	// 403, not 401: the panel treats 401 as an expired session and signs out.
 	case errors.Is(err, cc.ErrPasswordIncorrect):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusForbidden)

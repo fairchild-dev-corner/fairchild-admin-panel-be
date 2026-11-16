@@ -3,9 +3,11 @@ package services
 import (
 	"bytes"
 	"encoding/csv"
+	"math"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	models "fairchild-admin-panel-be/internal/models/voters"
@@ -18,8 +20,18 @@ import (
 const headerScanRows = 10
 
 var (
-	memberIDHeader = regexp.MustCompile(`(?i)^\s*(member\s*(id|no\.?|number|#)|id\s*(no\.?|number)?|membership\s*(no\.?|number|id))\s*#?\.?\s*$`)
+	memberIDHeader = regexp.MustCompile(`(?i)^\s*(member\s*(id|no\.?|number|#)|id\s*(no\.?|number)?|membership\s*(no\.?|number|id)|badge\s*(id|no\.?|number)?)\s*#?\.?\s*$`)
 	nameHeader     = regexp.MustCompile(`(?i)^\s*(full\s*name|name|member\s*name|member'?s\s*name)\s*$`)
+	categoryHeader = regexp.MustCompile(`(?i)^\s*(category|voter\s*(category|type|status)|voting\s*(category|status))\s*$`)
+	// Separators dropped before reading a category: "Non-Voting", "non voting".
+	categorySeparators = regexp.MustCompile(`[\s_-]+`)
+	// Election token amounts. "SURVEY" and "LUCKY PICK" on their own are
+	// yes/no columns, so only the amount headers match.
+	attendanceHeader = regexp.MustCompile(`(?i)^\s*attendance(\s*(token|amount|reward))?\s*$`)
+	surveyHeader     = regexp.MustCompile(`(?i)^\s*completed?\s*survey(\s*(token|amount|reward))?\s*$`)
+	luckyPickHeader  = regexp.MustCompile(`(?i)^\s*lucky\s*pick\s*prize(\s*(token|amount))?\s*$`)
+	// Dropped before reading an amount: "₱1,000.00", "PHP 500".
+	amountNoise = regexp.MustCompile(`(?i)[\s,₱]|php`)
 	// "696.0" - a number Excel stored as a float.
 	floatTail = regexp.MustCompile(`^(\d+)\.0+$`)
 )
@@ -56,16 +68,55 @@ func readSheet(fileName string, data []byte) ([][]string, error) {
 	}
 }
 
-// parseMasterList finds the header row (a "Member ID" column, and a "Name"
-// column if there is one) and reads the members below it. blank counts rows
-// with a name but no member ID.
-func parseMasterList(fileName string, data []byte) (rows []models.MasterListRow, blank int, err error) {
+// parseCategory reads a Category cell as CategoryVoting or
+// CategoryNonVoting; ok is false for a blank or unknown one.
+func parseCategory(s string) (category string, ok bool) {
+	switch categorySeparators.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), "") {
+	case "voting", "voter":
+		return models.CategoryVoting, true
+	case "nonvoting", "nonvoter":
+		return models.CategoryNonVoting, true
+	}
+	return "", false
+}
+
+// parseToken reads an election token amount in pesos; blank is 0.
+func parseToken(s string) (float64, bool) {
+	s = amountNoise.ReplaceAllString(s, "")
+	if s == "" || s == "-" {
+		return 0, true
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v < 0 || v > models.MaxToken || math.IsNaN(v) {
+		return 0, false
+	}
+	return math.Round(v*100) / 100, true
+}
+
+// validTokens checks amounts sent back in a save request.
+func validTokens(t models.Tokens) bool {
+	for _, v := range []float64{t.Attendance, t.Survey, t.LuckyPick} {
+		if v < 0 || v > models.MaxToken || math.IsNaN(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseMasterList finds the header row (a "Member ID" or "Badge" column, and
+// "Name", "Category" and token amount columns if there are) and reads the
+// members below it. Without a Category column everyone is voting; with one,
+// rows whose category is blank or unknown go to badCategory instead of rows.
+// An unreadable token amount rejects the file. blank counts rows with a name
+// but no member ID.
+func parseMasterList(fileName string, data []byte) (rows, badCategory []models.MasterListRow, blank int, err error) {
 	sheet, err := readSheet(fileName, data)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
-	header, idCol, nameCol := -1, -1, -1
+	header, idCol, nameCol, categoryCol := -1, -1, -1, -1
+	attendanceCol, surveyCol, luckyPickCol := -1, -1, -1
 	for i := 0; i < min(len(sheet), headerScanRows) && header < 0; i++ {
 		for j, cell := range sheet[i] {
 			if idCol < 0 && memberIDHeader.MatchString(cell) {
@@ -74,15 +125,24 @@ func parseMasterList(fileName string, data []byte) (rows []models.MasterListRow,
 		}
 		if header >= 0 {
 			for j, cell := range sheet[i] {
-				if j != idCol && nameHeader.MatchString(cell) {
+				switch {
+				case j == idCol:
+				case nameCol < 0 && nameHeader.MatchString(cell):
 					nameCol = j
-					break
+				case categoryCol < 0 && categoryHeader.MatchString(cell):
+					categoryCol = j
+				case attendanceCol < 0 && attendanceHeader.MatchString(cell):
+					attendanceCol = j
+				case surveyCol < 0 && surveyHeader.MatchString(cell):
+					surveyCol = j
+				case luckyPickCol < 0 && luckyPickHeader.MatchString(cell):
+					luckyPickCol = j
 				}
 			}
 		}
 	}
 	if header < 0 {
-		return nil, 0, invalid("Couldn't find a \"Member ID\" column in the first %d rows of %s", headerScanRows, fileName)
+		return nil, nil, 0, invalid("Couldn't find a \"Member ID\" or \"Badge\" column in the first %d rows of %s", headerScanRows, fileName)
 	}
 
 	cell := func(row []string, col int) string {
@@ -103,15 +163,42 @@ func parseMasterList(fileName string, data []byte) (rows []models.MasterListRow,
 			blank++
 			continue
 		}
-		rows = append(rows, models.MasterListRow{Row: i + 1, MemberNo: memberNo, Name: name})
-		if len(rows) > models.MaxMasterListRows {
-			return nil, 0, invalid("A master list can have up to %d members", models.MaxMasterListRows)
+		row := models.MasterListRow{Row: i + 1, MemberNo: memberNo, Name: name, Category: models.CategoryVoting}
+		for _, t := range []struct {
+			col    int
+			header string
+			dst    *float64
+		}{
+			{attendanceCol, "Attendance", &row.Attendance},
+			{surveyCol, "Complete Survey", &row.Survey},
+			{luckyPickCol, "Lucky Pick Prize", &row.LuckyPick},
+		} {
+			v, ok := parseToken(cell(sheet[i], t.col))
+			if !ok {
+				return nil, nil, 0, invalid("Row %d: %q in the %s column isn't an amount (0 to %d)",
+					i+1, cell(sheet[i], t.col), t.header, models.MaxToken)
+			}
+			*t.dst = v
+		}
+		if categoryCol >= 0 {
+			raw := cell(sheet[i], categoryCol)
+			category, ok := parseCategory(raw)
+			if !ok {
+				row.Category = raw
+				badCategory = append(badCategory, row)
+				continue
+			}
+			row.Category = category
+		}
+		rows = append(rows, row)
+		if len(rows)+len(badCategory) > models.MaxMasterListRows {
+			return nil, nil, 0, invalid("A master list can have up to %d members", models.MaxMasterListRows)
 		}
 	}
-	if len(rows) == 0 {
-		return nil, 0, invalid("%s has no member IDs under the \"Member ID\" column", fileName)
+	if len(rows) == 0 && len(badCategory) == 0 {
+		return nil, nil, 0, invalid("%s has no member IDs under the \"Member ID\" column", fileName)
 	}
-	return rows, blank, nil
+	return rows, badCategory, blank, nil
 }
 
 // accountIndex matches member IDs to portal accounts: exactly (ignoring
@@ -144,10 +231,11 @@ func (idx accountIndex) find(memberNo string) (models.AccountRef, bool) {
 }
 
 // matchRows splits rows into members with a portal account (one each),
-// rows with none, and repeats.
-func matchRows(idx accountIndex, rows []models.MasterListRow) (members []models.MasterListMember, notFound, duplicates []models.MasterListRow) {
-	members, notFound, duplicates = []models.MasterListMember{}, []models.MasterListRow{}, []models.MasterListRow{}
-	seen := map[int64]bool{}
+// rows with none, and repeats. A repeat with a different category than the
+// member's first row is a conflict; the first row is kept.
+func matchRows(idx accountIndex, rows []models.MasterListRow) (members []models.MasterListMember, notFound, duplicates, conflicts []models.MasterListRow) {
+	members, notFound, duplicates, conflicts = []models.MasterListMember{}, []models.MasterListRow{}, []models.MasterListRow{}, []models.MasterListRow{}
+	seen := map[int64]string{}
 	var missing []string
 	for _, r := range rows {
 		a, ok := idx.find(r.MemberNo)
@@ -161,14 +249,23 @@ func matchRows(idx accountIndex, rows []models.MasterListRow) (members []models.
 			}
 			continue
 		}
-		if seen[a.UserID] {
-			duplicates = append(duplicates, r)
+		category := r.Category
+		if category == "" {
+			category = models.CategoryVoting
+		}
+		if first, ok := seen[a.UserID]; ok {
+			if first != category {
+				conflicts = append(conflicts, r)
+			} else {
+				duplicates = append(duplicates, r)
+			}
 			continue
 		}
-		seen[a.UserID] = true
+		seen[a.UserID] = category
 		members = append(members, models.MasterListMember{
-			MemberNo: a.MemberNo, ListedName: r.Name, AccountName: a.Name, Status: a.Status, UserID: a.UserID,
+			MemberNo: a.MemberNo, ListedName: r.Name, AccountName: a.Name, Status: a.Status,
+			Voting: category == models.CategoryVoting, Tokens: r.Tokens, UserID: a.UserID,
 		})
 	}
-	return members, notFound, duplicates
+	return members, notFound, duplicates, conflicts
 }

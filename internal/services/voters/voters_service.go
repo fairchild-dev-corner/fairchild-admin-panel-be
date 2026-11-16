@@ -7,12 +7,15 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	cc "fairchild-admin-panel-be/internal/constants"
 	interfaces "fairchild-admin-panel-be/internal/interfaces"
+	app_models "fairchild-admin-panel-be/internal/models/applications"
 	audit_models "fairchild-admin-panel-be/internal/models/audit"
 	member_models "fairchild-admin-panel-be/internal/models/members"
 	models "fairchild-admin-panel-be/internal/models/voters"
+	"fairchild-admin-panel-be/internal/utils"
 )
 
 type VotersService struct {
@@ -115,7 +118,7 @@ func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, fi
 		return nil, invalid("The file is too large (up to %d MB)", models.MaxMasterListBytes>>20)
 	}
 
-	rows, blank, err := parseMasterList(fileName, data)
+	rows, badCategory, blank, err := parseMasterList(fileName, data)
 	if err != nil {
 		return nil, err
 	}
@@ -127,15 +130,18 @@ func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, fi
 	if err != nil {
 		return nil, err
 	}
-	members, notFound, duplicates := matchRows(newAccountIndex(accounts), rows)
+	members, notFound, duplicates, conflicts := matchRows(newAccountIndex(accounts), rows)
 
 	check := &models.MasterListCheck{
-		FileName: filepath.Base(fileName), Rows: len(rows), Members: members, NotFound: notFound,
-		Inactive: []models.MasterListMember{}, Duplicates: duplicates, Blank: blank, CurrentCount: summary.Count,
+		FileName: filepath.Base(fileName), Rows: len(rows) + len(badCategory), Members: members, NotFound: notFound,
+		Duplicates: duplicates, Conflicts: conflicts,
+		InvalidCategory: append([]models.MasterListRow{}, badCategory...), Blank: blank, CurrentCount: summary.Count,
 	}
 	for _, m := range members {
-		if m.Status != "active" {
-			check.Inactive = append(check.Inactive, m)
+		if m.Voting {
+			check.VotingCount++
+		} else {
+			check.NonVotingCount++
 		}
 	}
 	return check, nil
@@ -154,11 +160,24 @@ func (s *VotersService) SaveMasterList(ctx context.Context, req *models.SaveMast
 	if len(req.Members) > models.MaxMasterListRows {
 		return nil, invalid("A master list can have up to %d members", models.MaxMasterListRows)
 	}
+	for i, r := range req.Members {
+		if !validTokens(r.Tokens) {
+			return nil, invalid("Member %s has a token amount outside 0 to %d", r.MemberNo, models.MaxToken)
+		}
+		if r.Category == "" {
+			continue
+		}
+		category, ok := parseCategory(r.Category)
+		if !ok {
+			return nil, invalid("Member %s has an unknown category %q", r.MemberNo, r.Category)
+		}
+		req.Members[i].Category = category
+	}
 	accounts, err := s.repo.LoadAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	members, _, _ := matchRows(newAccountIndex(accounts), req.Members)
+	members, _, _, _ := matchRows(newAccountIndex(accounts), req.Members)
 	if len(members) == 0 {
 		return nil, invalid("None of these members has a portal account")
 	}
@@ -174,9 +193,75 @@ func (s *VotersService) SaveMasterList(ctx context.Context, req *models.SaveMast
 	return s.repo.Summary(ctx)
 }
 
+// SetVoting switches one member between voting and non-voting on the master
+// list, adding them to it if they aren't listed. Only while the election is
+// on, like uploading; the next upload replaces it.
+func (s *VotersService) SetVoting(ctx context.Context, rawID string, voting bool, actor audit_models.Actor) (*models.MasterListSummary, error) {
+	if err := s.requireElectionOn(ctx); err != nil {
+		return nil, err
+	}
+	id, ok := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, rawID)
+	if !ok {
+		return nil, cc.ErrPortalMemberNotFound
+	}
+	action := cc.AUDIT_SET_MEMBER_NON_VOTING
+	if voting {
+		action = cc.AUDIT_SET_MEMBER_VOTING
+	}
+	if err := s.repo.SetVoting(ctx, id, voting, actor.Log(action, "")); err != nil {
+		return nil, err
+	}
+	return s.repo.Summary(ctx)
+}
+
+// claimYear is the year whose token claims count, in Asia/Manila - the same
+// rule fairchild_be uses when a member claims on the portal.
+func claimYear() int {
+	return time.Now().In(utils.ManilaTZ).Year()
+}
+
+// SetTokenClaim marks one member's election tokens claimed this year (e.g.
+// paid out at the branch) or undoes it. Allowed whether or not the election
+// is on, so payouts can be recorded after it ends.
+func (s *VotersService) SetTokenClaim(ctx context.Context, rawID string, claimed bool, actor audit_models.Actor) (*models.TokenClaimsSummary, error) {
+	id, ok := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, rawID)
+	if !ok {
+		return nil, cc.ErrPortalMemberNotFound
+	}
+	action := cc.AUDIT_UNDID_TOKEN_CLAIM
+	if claimed {
+		action = cc.AUDIT_MARKED_TOKENS_CLAIMED
+	}
+	if err := s.repo.SetTokenClaim(ctx, id, claimYear(), claimed, actor.Log(action, "")); err != nil {
+		return nil, err
+	}
+	return s.repo.TokenClaimsSummary(ctx)
+}
+
+func (s *VotersService) TokenClaims(ctx context.Context) (*models.TokenClaimsSummary, error) {
+	return s.repo.TokenClaimsSummary(ctx)
+}
+
+// ResetTokenClaims deletes every election token claim, so members can claim
+// again at the next election, once the admin's own password checks out.
+// Only while the election is on, like resetting the master list.
+func (s *VotersService) ResetTokenClaims(ctx context.Context, req *models.ResetTokenClaimsRequest, actor audit_models.Actor, userAgent string) (*models.TokenClaimsSummary, error) {
+	if err := s.requireElectionOn(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.passwords.ConfirmPassword(ctx, actor.UserPanelID, req.Password, actor.IP, userAgent); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.ClearTokenClaims(ctx, actor.Log(cc.AUDIT_RESET_TOKEN_CLAIMS, "")); err != nil {
+		return nil, err
+	}
+	return s.repo.TokenClaimsSummary(ctx)
+}
+
 // List pages every member (or only voting / non-voting ones).
 func (s *VotersService) List(ctx context.Context, q models.VoterListQuery) (*models.VoterPage, error) {
 	q.Search = strings.TrimSpace(q.Search)
+	q.ClaimYear = claimYear()
 	counts, err := s.repo.CountVoters(ctx, q.Search)
 	if err != nil {
 		return nil, err

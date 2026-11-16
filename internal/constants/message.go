@@ -6,6 +6,11 @@ const (
 	// Audit log actions
 	AUDIT_APPROVED_LOAN_APPLICATION       = "Approved loan application"
 	AUDIT_REJECTED_LOAN_APPLICATION       = "Rejected loan application"
+	AUDIT_EMAILED_LOAN_APPLICANT          = "Emailed loan applicant"
+	AUDIT_TEXTED_LOAN_APPLICANT           = "Texted loan applicant"
+	AUDIT_ADDED_LOAN_APPLICATION_NOTE     = "Added note to loan application"
+	AUDIT_EDITED_LOAN_APPLICATION_NOTE    = "Edited note on loan application"
+	AUDIT_DELETED_LOAN_APPLICATION_NOTE   = "Deleted note from loan application"
 	AUDIT_APPROVED_MEMBERSHIP_APPLICATION = "Approved membership application"
 	AUDIT_REJECTED_MEMBERSHIP_APPLICATION = "Rejected membership application"
 	AUDIT_ADDED_MEMBERSHIP_APPLICATION    = "Added membership application"
@@ -27,6 +32,11 @@ const (
 	AUDIT_TURNED_ELECTION_ON              = "Turned election on"
 	AUDIT_TURNED_ELECTION_OFF             = "Turned election off"
 	AUDIT_RESET_MASTER_LIST               = "Reset voters' master list (everyone non-voting)"
+	AUDIT_SET_MEMBER_VOTING               = "Set member as voting"
+	AUDIT_SET_MEMBER_NON_VOTING           = "Set member as non-voting"
+	AUDIT_MARKED_TOKENS_CLAIMED           = "Marked election tokens claimed"
+	AUDIT_UNDID_TOKEN_CLAIM               = "Undid election token claim"
+	AUDIT_RESET_TOKEN_CLAIMS              = "Reset election token claims"
 	AUDIT_UPDATED_OWN_PROFILE             = "Updated own profile"
 	AUDIT_CHANGED_OWN_PASSWORD            = "Changed own password"
 	AUDIT_EMAILED_CONTACT_REPLY           = "Emailed reply to contact message"
@@ -41,3 +51,18 @@ const (
 	AUDIT_SUSPENDED_PANEL_USER            = "Suspended panel user"
 	AUDIT_REACTIVATED_PANEL_USER          = "Reactivated panel user"
 )
+
+// ElectionAuditActions are the audit actions written from the Election
+// pages; Election > Audit Log lists only these. Add a new election action
+// here too.
+var ElectionAuditActions = []string{
+	AUDIT_TURNED_ELECTION_ON,
+	AUDIT_TURNED_ELECTION_OFF,
+	AUDIT_UPLOADED_MASTER_LIST,
+	AUDIT_RESET_MASTER_LIST,
+	AUDIT_SET_MEMBER_VOTING,
+	AUDIT_SET_MEMBER_NON_VOTING,
+	AUDIT_MARKED_TOKENS_CLAIMED,
+	AUDIT_UNDID_TOKEN_CLAIM,
+	AUDIT_RESET_TOKEN_CLAIMS,
+}

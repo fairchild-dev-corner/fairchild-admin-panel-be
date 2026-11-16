@@ -48,6 +48,7 @@ import (
 	blasts_service "fairchild-admin-panel-be/internal/services/blasts"
 	capabilities_service "fairchild-admin-panel-be/internal/services/capabilities"
 	claims_service "fairchild-admin-panel-be/internal/services/claims"
+	composer_service "fairchild-admin-panel-be/internal/services/composer"
 	contact_service "fairchild-admin-panel-be/internal/services/contact"
 	dashboard_service "fairchild-admin-panel-be/internal/services/dashboard"
 	health_service "fairchild-admin-panel-be/internal/services/health"
@@ -131,11 +132,6 @@ func (s *APIServer) Run() {
 	dashboardService := dashboard_service.NewDashboardService(dashboardRepo)
 	dashboard_handler.NewHandler(dashboardService).RegisterRoutes(admin)
 
-	// applications: repo -> service -> handler (loan + membership reviews)
-	applicationsRepo := applications_repo.NewApplicationsRepository(s.mysqlDB)
-	applicationsService := applications_service.NewApplicationsService(applicationsRepo)
-	applications_handler.NewHandler(applicationsService).RegisterRoutes(admin)
-
 	// members: repos -> service -> handler (admin_members CRUD + read-only
 	// branch ledger members)
 	membersRepo := members_repo.NewMembersRepository(s.mysqlDB)
@@ -159,6 +155,12 @@ func (s *APIServer) Run() {
 	if s.messagingConf.Movider != nil {
 		smsSender = messaging.NewMoviderClient(s.messagingConf.Movider)
 	}
+
+	// applications: repo -> service -> handler (loan + membership reviews,
+	// and texting or emailing a loan applicant)
+	applicationsRepo := applications_repo.NewApplicationsRepository(s.mysqlDB)
+	applicationsService := applications_service.NewApplicationsService(applicationsRepo, emailSender, smsSender)
+	applications_handler.NewHandler(applicationsService).RegisterRoutes(admin)
 
 	// account claims: repo -> service -> handler (fairchild_be
 	// `account_claim_requests`: list, approve = copy the requested
@@ -187,7 +189,12 @@ func (s *APIServer) Run() {
 	// via the portal ledger index; a background worker sends them)
 	blastsRepo := blasts_repo.NewBlastsRepository(s.mysqlDB)
 	blastsService := blasts_service.NewBlastsService(blastsRepo, portalService, emailSender, smsSender, s.messagingConf.Blast)
-	blasts_handler.NewHandler(blastsService).RegisterRoutes(admin)
+	// FYRO AI Composer: drafts blasts with OpenAI GPT-4o mini (off without OPENAI_API_KEY)
+	var composerService *composer_service.ComposerService
+	if c := s.messagingConf.Composer; c != nil {
+		composerService = composer_service.NewComposerService(c.APIKey, c.Model)
+	}
+	blasts_handler.NewHandler(blastsService, composerService).RegisterRoutes(admin)
 
 	// voters: repo -> service -> handler (`voter_master_list`, uploaded from
 	// Excel; Members List = fairchild_be `users` joined with it)
