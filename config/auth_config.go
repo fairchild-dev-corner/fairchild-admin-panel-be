@@ -28,7 +28,6 @@ func GetJWTConfig() (*models.JWTConfig, error) {
 	if err != nil || refreshTTL <= 0 {
 		refreshTTL = 12
 	}
-
 	return models.NewJWTConfig(Envs.AdminJWTAccessSecret, accessTTL, refreshTTL), nil
 }
 
