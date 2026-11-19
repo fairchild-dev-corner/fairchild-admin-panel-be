@@ -38,12 +38,30 @@ const (
 // member's first name.
 const NamePlaceholder = "{name}"
 
+// Master list groups a blast can be narrowed to (voter_master_list): its
+// category, or the Delinquent flag. A member off the list is in none.
+const (
+	GroupVoting     = "voting"
+	GroupNonVoting  = "non_voting"
+	GroupIneligible = "ineligible"
+	GroupDelinquent = "delinquent"
+)
+
+var Groups = []string{GroupVoting, GroupNonVoting, GroupIneligible, GroupDelinquent}
+
+// MaxPickedMembers caps a blast to hand-picked members.
+const MaxPickedMembers = 1000
+
 // BlastAudience is who a blast goes to: live portal accounts with one of
 // these statuses, on one of these branches (none = every branch, including
-// accounts on no ledger).
+// accounts on no ledger), in one of these master list groups (none = anyone).
+// Or, when Picked > 0, that many members the admin picked by hand (then the
+// filters are empty).
 type BlastAudience struct {
 	Statuses []string `json:"statuses"`
 	Branches []string `json:"branches"`
+	Groups   []string `json:"groups"`
+	Picked   int      `json:"picked,omitempty"`
 }
 
 // BlastCounts tallies recipients (messages, one per member per channel) by
@@ -123,11 +141,15 @@ type ChannelStatus struct {
 	SMS   bool `json:"sms"`
 }
 
-// AudienceRequest is the body of POST /admin/blasts/preview.
+// AudienceRequest is the body of POST /admin/blasts/preview. MemberIDs
+// (portal account ids, "PU-00012") picks members by hand instead of the
+// statuses, branches and groups.
 type AudienceRequest struct {
-	Channel  string   `json:"channel" validate:"required"`
-	Statuses []string `json:"statuses"`
-	Branches []string `json:"branches"`
+	Channel   string   `json:"channel" validate:"required"`
+	Statuses  []string `json:"statuses"`
+	Branches  []string `json:"branches"`
+	Groups    []string `json:"groups"`
+	MemberIDs []string `json:"memberIds"`
 }
 
 // AudiencePreview says how many messages a blast would send. In test mode
@@ -138,8 +160,11 @@ type AudiencePreview struct {
 	SMS          int            `json:"sms"`
 	NoContact    int            `json:"noContact"`
 	BranchCounts map[string]int `json:"branchCounts"`
-	TestMode     bool           `json:"testMode"`
-	Deliverable  int            `json:"deliverable"`
+	// Members per master list group, among those matching the statuses and
+	// branches (before the group filter, for the picker).
+	GroupCounts map[string]int `json:"groupCounts"`
+	TestMode    bool           `json:"testMode"`
+	Deliverable int            `json:"deliverable"`
 }
 
 // CreateBlastRequest is the body of POST /admin/blasts.
@@ -174,6 +199,9 @@ type AudienceMember struct {
 	Name     string
 	Email    string
 	Mobile   string // the account's own, or a Young Saver's guardian's
+	// On the master list: its category (empty when not listed) and flag.
+	Category   string
+	Delinquent bool
 }
 
 // NewRecipient is a message to queue when a blast is created.
@@ -226,3 +254,54 @@ type ComposedBlast struct {
 	EmailBody string `json:"emailBody"`
 	SMSBody   string `json:"smsBody"`
 }
+
+// InGroup says whether the member is in a master list group.
+func (m AudienceMember) InGroup(group string) bool {
+	if group == GroupDelinquent {
+		return m.Delinquent
+	}
+	return m.Category != "" && m.Category == group
+}
+
+// AudienceCandidate is one result of GET /admin/blasts/members?q=, for
+// picking blast recipients by hand.
+type AudienceCandidate struct {
+	ID         string `json:"id"`
+	MemberNo   string `json:"memberNo,omitempty"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Category   string `json:"category,omitempty"`
+	Delinquent bool   `json:"delinquent,omitempty"`
+	HasEmail   bool   `json:"hasEmail"`
+	HasMobile  bool   `json:"hasMobile"`
+}
+
+// BlastRecipient is one message of a blast, for its progress list.
+type BlastRecipient struct {
+	ID        int64  `json:"id"`
+	MemberNo  string `json:"memberNo,omitempty"`
+	Name      string `json:"name"`
+	Channel   string `json:"channel"`
+	Recipient string `json:"recipient"`
+	// pending (including being sent right now), sent, failed or skipped.
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+	SentAt string `json:"sentAt,omitempty"`
+}
+
+// DeleteResult is DELETE /admin/blasts: how many finished blasts were removed.
+type DeleteResult struct {
+	Deleted int `json:"deleted"`
+}
+
+// RecipientPage is GET /admin/blasts/:id/recipients?status=&page=&pageSize=:
+// the blast's messages, oldest queued first.
+type RecipientPage struct {
+	Items    []BlastRecipient `json:"items"`
+	Total    int              `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"pageSize"`
+}
+
+// RecipientStatuses filter a blast's progress list ("" = all).
+var RecipientStatuses = []string{RecipientPending, RecipientSent, RecipientFailed, RecipientSkipped}

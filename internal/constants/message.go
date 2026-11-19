@@ -28,12 +28,15 @@ const (
 	AUDIT_STARTED_BLAST                   = "Started SMS/email blast"
 	AUDIT_CANCELLED_BLAST                 = "Cancelled SMS/email blast"
 	AUDIT_SENT_TEST_BLAST                 = "Sent test SMS/email blast"
+	AUDIT_DELETED_BLAST                   = "Deleted SMS/email blast"
+	AUDIT_DELETED_ALL_BLASTS              = "Deleted all finished SMS/email blasts"
 	AUDIT_UPLOADED_MASTER_LIST            = "Uploaded voters' master list"
 	AUDIT_TURNED_ELECTION_ON              = "Turned election on"
 	AUDIT_TURNED_ELECTION_OFF             = "Turned election off"
 	AUDIT_RESET_MASTER_LIST               = "Reset voters' master list (everyone non-voting)"
 	AUDIT_SET_MEMBER_VOTING               = "Set member as voting"
 	AUDIT_SET_MEMBER_NON_VOTING           = "Set member as non-voting"
+	AUDIT_SET_MEMBER_INELIGIBLE           = "Set member as ineligible"
 	AUDIT_MARKED_TOKENS_CLAIMED           = "Marked election tokens claimed"
 	AUDIT_UNDID_TOKEN_CLAIM               = "Undid election token claim"
 	AUDIT_RESET_TOKEN_CLAIMS              = "Reset election token claims"
@@ -62,6 +65,7 @@ var ElectionAuditActions = []string{
 	AUDIT_RESET_MASTER_LIST,
 	AUDIT_SET_MEMBER_VOTING,
 	AUDIT_SET_MEMBER_NON_VOTING,
+	AUDIT_SET_MEMBER_INELIGIBLE,
 	AUDIT_MARKED_TOKENS_CLAIMED,
 	AUDIT_UNDID_TOKEN_CLAIM,
 	AUDIT_RESET_TOKEN_CLAIMS,

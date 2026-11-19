@@ -98,15 +98,17 @@ func (r *VotersRepository) ReplaceMasterList(ctx context.Context, fileName strin
 		}
 		for start := 0; start < len(members); start += masterListChunk {
 			chunk := members[start:min(len(members), start+masterListChunk)]
-			args := make([]any, 0, len(chunk)*7)
+			args := make([]any, 0, len(chunk)*10)
 			for _, m := range chunk {
-				args = append(args, m.UserID, m.MemberNo, m.ListedName, m.Voting, m.Attendance, m.Survey, m.LuckyPick)
+				args = append(args, m.UserID, m.MemberNo, m.ListedName, m.Voting, m.Category, m.Delinquent, joinReasons(m.Reasons),
+					m.Attendance, m.Survey, m.LuckyPick)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO voter_master_list
-				 (user_id, member_no, listed_name, is_voting, attendance_token, survey_token, lucky_pick_token)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`+
-					strings.Repeat(", (?, ?, ?, ?, ?, ?, ?)", len(chunk)-1),
+				 (user_id, member_no, listed_name, is_voting, category, is_delinquent, ineligible_reasons,
+				  attendance_token, survey_token, lucky_pick_token)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+
+					strings.Repeat(", (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", len(chunk)-1),
 				args...); err != nil {
 				return err
 			}
@@ -129,10 +131,10 @@ func (r *VotersRepository) ReplaceMasterList(ctx context.Context, fileName strin
 const accountName = `CONCAT_WS(', ', NULLIF(TRIM(u.last_name), ''),
 	                 NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.middle_name, u.suffix)), ''))`
 
-// SetVoting puts one live portal account on the master list as voting or
-// non-voting (adding it if it isn't listed) and audits it in the same
-// transaction.
-func (r *VotersRepository) SetVoting(ctx context.Context, userID int64, voting bool, audit *audit_models.AuditLog) error {
+// SetVoting puts one live portal account on the master list with category
+// (adding it if it isn't listed), replacing its ineligibility reasons, and
+// audits it in the same transaction.
+func (r *VotersRepository) SetVoting(ctx context.Context, userID int64, category string, reasons []string, audit *audit_models.AuditLog) error {
 	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
 		var memberNo, name string
 		err := tx.QueryRowContext(ctx,
@@ -149,9 +151,13 @@ func (r *VotersRepository) SetVoting(ctx context.Context, userID int64, voting b
 			return &cc.MasterListInputError{Msg: "This portal account has no member ID, so it can't be on the master list"}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO voter_master_list (user_id, member_no, listed_name, is_voting) VALUES (?, ?, ?, ?)
-			 ON DUPLICATE KEY UPDATE is_voting = VALUES(is_voting)`,
-			userID, memberNo, name, voting); err != nil {
+			`INSERT INTO voter_master_list (user_id, member_no, listed_name, is_voting, category, ineligible_reasons)
+			 VALUES (?, ?, ?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE
+			   is_voting = VALUES(is_voting),
+			   category = VALUES(category),
+			   ineligible_reasons = VALUES(ineligible_reasons)`,
+			userID, memberNo, name, category == models.CategoryVoting, category, joinReasons(reasons)); err != nil {
 			return err
 		}
 		audit.Target = memberNo
@@ -170,12 +176,14 @@ const votersFrom = `(
 	       u.id AS user_id, u.status AS account_status, m.id IS NOT NULL AS on_list,
 	       COALESCE(m.is_voting, FALSE) AS listed_voting,
 	       (m.id IS NOT NULL AND m.is_voting) AS can_vote,
-	       COALESCE(CASE WHEN m.is_voting THEN ` + tokenTotal + ` END, 0) AS token_total
+	       COALESCE(CASE WHEN m.is_voting THEN ` + tokenTotal + ` END, 0) AS token_total,
+	       COALESCE(m.category, '') AS category, COALESCE(m.ineligible_reasons, '') AS ineligible_reasons
 	FROM users u
 	LEFT JOIN voter_master_list m ON m.user_id = u.id
 	WHERE ` + liveAccount + `
 	UNION ALL
-	SELECT m.member_no, m.listed_name, m.user_id, NULL, TRUE, m.is_voting, FALSE, 0
+	SELECT m.member_no, m.listed_name, m.user_id, NULL, TRUE, m.is_voting, FALSE, 0,
+	       m.category, COALESCE(m.ineligible_reasons, '')
 	FROM voter_master_list m
 	LEFT JOIN users u ON u.id = m.user_id AND ` + liveAccount + `
 	WHERE u.id IS NULL
@@ -214,7 +222,7 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 
 	rows, err := r.DB.QueryContext(ctx,
 		`SELECT x.member_no, COALESCE(x.name, ''), x.user_id, COALESCE(x.account_status, ''), x.on_list, x.listed_voting, x.can_vote,
-		        x.token_total
+		        x.token_total, x.category, x.ineligible_reasons
 		 FROM `+votersFrom+`
 		 WHERE `+where+`
 		 ORDER BY x.on_list DESC, COALESCE(x.name, '') = '', x.name, x.member_no
@@ -230,9 +238,13 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 	for rows.Next() {
 		var v models.Voter
 		var userID int64
+		var reasons string
 		if err := rows.Scan(&v.MemberNo, &v.Name, &userID, &v.AccountStatus, &v.OnMasterList, &v.ListedVoting, &v.CanVote,
-			&v.TokenTotal); err != nil {
+			&v.TokenTotal, &v.Category, &reasons); err != nil {
 			return nil, err
+		}
+		if v.Category == models.CategoryIneligible {
+			v.IneligibleReasons = splitReasons(reasons)
 		}
 		userIDs = append(userIDs, userID)
 		switch {
@@ -240,6 +252,8 @@ func (r *VotersRepository) ListVoters(ctx context.Context, q models.VoterListQue
 			v.Reason = models.ReasonNoAccount
 		case !v.OnMasterList:
 			v.Reason = models.ReasonNotListed
+		case !v.ListedVoting && v.Category == models.CategoryIneligible:
+			v.Reason = models.ReasonListedIneligible
 		case !v.ListedVoting:
 			v.Reason = models.ReasonListedNonVoting
 		}
@@ -446,12 +460,12 @@ func (r *VotersRepository) ClearMasterList(ctx context.Context, audit *audit_mod
 func (r *VotersRepository) VoterStatuses(ctx context.Context) ([]models.VoterStatus, error) {
 	rows, err := r.DB.QueryContext(ctx,
 		`SELECT COALESCE(TRIM(u.member_id), ''), COALESCE(TRIM(u.user_client_id), ''),
-		        m.id IS NOT NULL AND m.is_voting
+		        m.id IS NOT NULL AND m.is_voting, m.id IS NOT NULL, COALESCE(m.category, '')
 		 FROM users u
 		 LEFT JOIN voter_master_list m ON m.user_id = u.id
 		 WHERE `+liveAccount+`
 		 UNION ALL
-		 SELECT m.member_no, '', FALSE
+		 SELECT m.member_no, '', FALSE, TRUE, m.category
 		 FROM voter_master_list m
 		 LEFT JOIN users u ON u.id = m.user_id AND `+liveAccount+`
 		 WHERE u.id IS NULL`)
@@ -462,10 +476,29 @@ func (r *VotersRepository) VoterStatuses(ctx context.Context) ([]models.VoterSta
 	statuses := make([]models.VoterStatus, 0, 16384)
 	for rows.Next() {
 		var v models.VoterStatus
-		if err := rows.Scan(&v.MemberNo, &v.ClientID, &v.CanVote); err != nil {
+		if err := rows.Scan(&v.MemberNo, &v.ClientID, &v.CanVote, &v.OnList, &v.Category); err != nil {
 			return nil, err
 		}
 		statuses = append(statuses, v)
 	}
 	return statuses, rows.Err()
+}
+
+// joinReasons stores a member's ineligibility reasons one per line, or NULL.
+func joinReasons(reasons []string) any {
+	if len(reasons) == 0 {
+		return nil
+	}
+	return strings.Join(reasons, "\n")
+}
+
+// splitReasons reads ineligible_reasons (one per line).
+func splitReasons(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }

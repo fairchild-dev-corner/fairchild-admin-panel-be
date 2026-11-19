@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -43,28 +44,21 @@ func FormatBlastID(id int64) string {
 	return app_models.FormatID(cc.MESSAGE_BLAST_ID_PREFIX, id)
 }
 
-// ListAudience reads every live portal account with one of these statuses.
+// audienceSelect reads live portal accounts with their master list group.
 // The text goes to the account's mobile, or a Young Saver's guardian's -
 // the same fallback fairchild_be uses for OTPs.
-func (r *BlastsRepository) ListAudience(ctx context.Context, statuses []string) ([]models.AudienceMember, error) {
-	if len(statuses) == 0 {
-		return nil, nil
-	}
-	args := make([]any, len(statuses))
-	for i, s := range statuses {
-		args[i] = s
-	}
-	rows, err := r.DB.QueryContext(ctx,
-		`SELECT u.id, COALESCE(TRIM(u.member_id), ''), COALESCE(TRIM(u.user_client_id), ''), u.status,
-		        TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), COALESCE(TRIM(u.email), ''),
-		        COALESCE(NULLIF(TRIM(u.mobile_number), ''),
-		                 IF(u.member_type = 'young_saver', NULLIF(TRIM(u.guardian_mobile_number), ''), NULL), '')
-		 FROM users u
-		 WHERE u.status <> 'deleted' AND u.deleted_at IS NULL
-		   AND u.status IN (?`+strings.Repeat(", ?", len(statuses)-1)+`)
-		 ORDER BY u.id`,
-		args...,
-	)
+const audienceSelect = `
+SELECT u.id, COALESCE(TRIM(u.member_id), ''), COALESCE(TRIM(u.user_client_id), ''), u.status,
+       TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), COALESCE(TRIM(u.email), ''),
+       COALESCE(NULLIF(TRIM(u.mobile_number), ''),
+                IF(u.member_type = 'young_saver', NULLIF(TRIM(u.guardian_mobile_number), ''), NULL), ''),
+       COALESCE(m.category, ''), COALESCE(m.is_delinquent, FALSE)
+FROM users u
+LEFT JOIN voter_master_list m ON m.user_id = u.id
+WHERE u.status <> 'deleted' AND u.deleted_at IS NULL`
+
+func (r *BlastsRepository) queryAudience(ctx context.Context, query string, args ...any) ([]models.AudienceMember, error) {
+	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +67,8 @@ func (r *BlastsRepository) ListAudience(ctx context.Context, statuses []string) 
 	members := make([]models.AudienceMember, 0, 1024)
 	for rows.Next() {
 		var m models.AudienceMember
-		if err := rows.Scan(&m.UserID, &m.MemberNo, &m.ClientID, &m.Status, &m.Name, &m.Email, &m.Mobile); err != nil {
+		if err := rows.Scan(&m.UserID, &m.MemberNo, &m.ClientID, &m.Status, &m.Name, &m.Email, &m.Mobile,
+			&m.Category, &m.Delinquent); err != nil {
 			return nil, err
 		}
 		members = append(members, m)
@@ -81,15 +76,97 @@ func (r *BlastsRepository) ListAudience(ctx context.Context, statuses []string) 
 	return members, rows.Err()
 }
 
+func inArgs[T any](values []T) (string, []any) {
+	args := make([]any, len(values))
+	for i, v := range values {
+		args[i] = v
+	}
+	return "(?" + strings.Repeat(", ?", len(values)-1) + ")", args
+}
+
+// ListAudience reads every live portal account with one of these statuses.
+func (r *BlastsRepository) ListAudience(ctx context.Context, statuses []string) ([]models.AudienceMember, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	in, args := inArgs(statuses)
+	return r.queryAudience(ctx, audienceSelect+` AND u.status IN `+in+` ORDER BY u.id`, args...)
+}
+
+// ListAudienceByIDs reads these live portal accounts, whatever their status.
+func (r *BlastsRepository) ListAudienceByIDs(ctx context.Context, userIDs []int64) ([]models.AudienceMember, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	in, args := inArgs(userIDs)
+	return r.queryAudience(ctx, audienceSelect+` AND u.id IN `+in+` ORDER BY u.id`, args...)
+}
+
+// SearchAudience finds live portal accounts by name, member ID, client ID or
+// email, for picking blast recipients by hand.
+func (r *BlastsRepository) SearchAudience(ctx context.Context, search string, limit int) ([]models.AudienceMember, error) {
+	like := "%" + utils.EscapeLike(search) + "%"
+	return r.queryAudience(ctx, audienceSelect+`
+		AND (CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? OR CONCAT_WS(', ', u.last_name, u.first_name) LIKE ?
+		     OR u.member_id LIKE ? OR u.user_client_id LIKE ? OR u.email LIKE ?)
+		ORDER BY u.last_name, u.first_name, u.id LIMIT ?`,
+		like, like, like, like, like, limit)
+}
+
+// Recipients lists one page of a blast's messages, oldest queued first.
+// status "pending" includes ones being sent; "" is every message.
+func (r *BlastsRepository) Recipients(ctx context.Context, blastID int64, status string, page, pageSize int) ([]models.BlastRecipient, int, error) {
+	where, args := `blast_id = ?`, []any{blastID}
+	switch status {
+	case "":
+	case models.RecipientPending:
+		where += ` AND status IN ('pending', 'sending')`
+	default:
+		where += ` AND status = ?`
+		args = append(args, status)
+	}
+
+	var total int
+	if err := r.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_blast_recipients WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT id, COALESCE(member_id, ''), name, channel, recipient, status, COALESCE(error, ''), sent_at
+		 FROM message_blast_recipients WHERE `+where+` ORDER BY id LIMIT ? OFFSET ?`,
+		append(args, pageSize, (page-1)*pageSize)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]models.BlastRecipient, 0, pageSize)
+	for rows.Next() {
+		var rc models.BlastRecipient
+		var sent sql.NullTime
+		if err := rows.Scan(&rc.ID, &rc.MemberNo, &rc.Name, &rc.Channel, &rc.Recipient, &rc.Status, &rc.Error, &sent); err != nil {
+			return nil, 0, err
+		}
+		if rc.Status == models.RecipientSending {
+			rc.Status = models.RecipientPending
+		}
+		if sent.Valid {
+			rc.SentAt = sent.Time.UTC().Format(time.RFC3339)
+		}
+		items = append(items, rc)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *BlastsRepository) Create(ctx context.Context, b *models.Blast, createdByID int64, recipients []models.NewRecipient, audit *audit_models.AuditLog) (int64, error) {
 	var id int64
 	err := database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO message_blasts (channel, subject, email_body, sms_body, audience_statuses, audience_branches,
-			                             test_mode, created_by_user_panel_id, created_by_name)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                             audience_groups, audience_picked, test_mode, created_by_user_panel_id, created_by_name)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			b.Channel, utils.NullIfEmpty(b.Subject), utils.NullIfEmpty(b.EmailBody), utils.NullIfEmpty(b.SMSBody),
 			strings.Join(b.Audience.Statuses, ","), strings.Join(b.Audience.Branches, ","),
+			strings.Join(b.Audience.Groups, ","), b.Audience.Picked,
 			b.TestMode, createdByID, b.CreatedBy,
 		)
 		if err != nil {
@@ -126,22 +203,25 @@ func (r *BlastsRepository) Create(ctx context.Context, b *models.Blast, createdB
 
 const blastSelect = `
 SELECT b.id, b.channel, COALESCE(b.subject, ''), COALESCE(b.email_body, ''), COALESCE(b.sms_body, ''),
-       b.audience_statuses, b.audience_branches, b.status, b.test_mode, b.created_by_name,
+       b.audience_statuses, b.audience_branches, b.audience_groups, b.audience_picked, b.status, b.test_mode, b.created_by_name,
        b.created_at, b.finished_at
 FROM message_blasts b`
 
 func scanBlast(row interface{ Scan(...any) error }) (*models.Blast, int64, error) {
 	var b models.Blast
 	var id int64
-	var statuses, branches string
+	var statuses, branches, groups string
+	var picked int
 	var created time.Time
 	var finished sql.NullTime
 	if err := row.Scan(&id, &b.Channel, &b.Subject, &b.EmailBody, &b.SMSBody,
-		&statuses, &branches, &b.Status, &b.TestMode, &b.CreatedBy, &created, &finished); err != nil {
+		&statuses, &branches, &groups, &picked, &b.Status, &b.TestMode, &b.CreatedBy, &created, &finished); err != nil {
 		return nil, 0, err
 	}
 	b.ID = FormatBlastID(id)
-	b.Audience = models.BlastAudience{Statuses: splitList(statuses), Branches: splitList(branches)}
+	b.Audience = models.BlastAudience{
+		Statuses: splitList(statuses), Branches: splitList(branches), Groups: splitList(groups), Picked: picked,
+	}
 	b.CreatedAt = created.UTC().Format(time.RFC3339)
 	if finished.Valid {
 		b.FinishedAt = finished.Time.UTC().Format(time.RFC3339)
@@ -298,6 +378,51 @@ func (r *BlastsRepository) Cancel(ctx context.Context, id int64, audit *audit_mo
 		audit.Target = FormatBlastID(id)
 		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
 	})
+}
+
+// Delete removes a finished or cancelled blast and (by cascade) its
+// messages. cc.ErrBlastStillSending while it's sending.
+func (r *BlastsRepository) Delete(ctx context.Context, id int64, audit *audit_models.AuditLog) error {
+	return database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		var status string
+		err := tx.QueryRowContext(ctx, `SELECT status FROM message_blasts WHERE id = ? FOR UPDATE`, id).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cc.ErrBlastNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if status == models.StatusSending {
+			return cc.ErrBlastStillSending
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM message_blasts WHERE id = ?`, id); err != nil {
+			return err
+		}
+		audit.Target = FormatBlastID(id)
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+}
+
+// DeleteFinished removes every blast that isn't sending (and their
+// messages), returning how many. Nothing is audited when there were none.
+func (r *BlastsRepository) DeleteFinished(ctx context.Context, audit *audit_models.AuditLog) (int, error) {
+	var deleted int
+	err := database.WithTx(ctx, r.DB, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM message_blasts WHERE status <> 'sending'`)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if deleted = int(n); deleted == 0 {
+			return nil
+		}
+		audit.Target = fmt.Sprintf("%d blasts", deleted)
+		return audit_repo.InsertAuditLogTx(ctx, tx, audit)
+	})
+	return deleted, err
 }
 
 // InsertAudit records an action with no other write (a test send).

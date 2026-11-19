@@ -41,6 +41,7 @@ func (h *PortalHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	admin.GET("/portal-members", need(caps.PortalView), h.handleList)
 	admin.GET("/portal-lookup", need(caps.PortalManage), h.handleLookup)
 	admin.POST("/portal-members", need(caps.PortalManage), h.handleAdd)
+	admin.GET("/portal-members/export", need(caps.PortalView), h.handleExport)
 	admin.GET("/portal-members/:id", need(caps.PortalView), h.handleGet)
 	admin.PUT("/portal-members/:id", need(caps.PortalManage), h.handleUpdateContact)
 	admin.PUT("/portal-members/:id/status", need(caps.PortalManage), h.handleUpdateStatus)
@@ -49,26 +50,12 @@ func (h *PortalHandler) RegisterRoutes(admin *gin.RouterGroup) {
 
 // handleList: GET /admin/portal-members?status=&branches=&q=&page=&pageSize=
 func (h *PortalHandler) handleList(ctx *gin.Context) {
-	q := models.PortalListQuery{
-		Status:   ctx.DefaultQuery("status", "active"),
-		Search:   ctx.Query("q"),
-		Page:     max(1, atoiOr(ctx.Query("page"), 1)),
-		PageSize: min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize),
-	}
-	if !utils.IsTabFilter(models.Statuses, q.Status) {
-		loggers.GetCommonError(ctx, cc.INVALID_PORTAL_FILTER, http.StatusBadRequest)
+	q, ok := filterQuery(ctx, "active")
+	if !ok {
 		return
 	}
-	for _, b := range strings.Split(ctx.Query("branches"), ",") {
-		if b = strings.TrimSpace(b); b == "" || slices.Contains(q.Branches, b) {
-			continue
-		}
-		if !slices.Contains(member_models.Branches, b) {
-			loggers.GetCommonError(ctx, cc.INVALID_PORTAL_FILTER, http.StatusBadRequest)
-			return
-		}
-		q.Branches = append(q.Branches, b)
-	}
+	q.Page = max(1, atoiOr(ctx.Query("page"), 1))
+	q.PageSize = min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize)
 
 	page, err := h.portalService.List(ctx, q)
 	if err != nil {
@@ -76,6 +63,48 @@ func (h *PortalHandler) handleList(ctx *gin.Context) {
 		return
 	}
 	loggers.SuccessResponse(ctx, page)
+}
+
+// filterQuery reads ?status=&branches=&q=, answering 400 itself when the status
+// or a branch is unknown.
+func filterQuery(ctx *gin.Context, defaultStatus string) (models.PortalListQuery, bool) {
+	q := models.PortalListQuery{
+		Status: ctx.DefaultQuery("status", defaultStatus),
+		Search: ctx.Query("q"),
+	}
+	if !utils.IsTabFilter(models.Statuses, q.Status) {
+		loggers.GetCommonError(ctx, cc.INVALID_PORTAL_FILTER, http.StatusBadRequest)
+		return q, false
+	}
+	for _, b := range strings.Split(ctx.Query("branches"), ",") {
+		if b = strings.TrimSpace(b); b == "" || slices.Contains(q.Branches, b) {
+			continue
+		}
+		if !slices.Contains(member_models.Branches, b) {
+			loggers.GetCommonError(ctx, cc.INVALID_PORTAL_FILTER, http.StatusBadRequest)
+			return q, false
+		}
+		q.Branches = append(q.Branches, b)
+	}
+	return q, true
+}
+
+// handleExport: GET /admin/portal-members/export?status=&branches=&q= - the
+// matching accounts (every one, not a page) as an Excel file download. status
+// is all, active, pending_review, inactive or suspended.
+func (h *PortalHandler) handleExport(ctx *gin.Context) {
+	q, ok := filterQuery(ctx, cc.FILTER_ALL)
+	if !ok {
+		return
+	}
+	file, name, err := h.portalService.Export(ctx, q)
+	if err != nil {
+		writePortalError(ctx, err)
+		return
+	}
+	ctx.Header("Content-Disposition", `attachment; filename="`+name+`"`)
+	ctx.Header("Cache-Control", "no-store")
+	ctx.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file)
 }
 
 // handleGet: GET /admin/portal-members/:id

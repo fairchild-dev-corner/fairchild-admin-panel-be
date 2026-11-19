@@ -36,6 +36,7 @@ func NewHandler(claimsService *service.ClaimsService) *ClaimsHandler {
 func (h *ClaimsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	need := middlewares.RequireCapability
 	admin.GET("/account-claims", need(caps.ClaimsView), h.handleList)
+	admin.GET("/account-claims/export", need(caps.ClaimsView), h.handleExport)
 	admin.GET("/account-claims/:id", need(caps.ClaimsView), h.handleGet)
 	admin.PUT("/account-claims/:id/approve", need(caps.ClaimsReview), h.handleApprove)
 	admin.PUT("/account-claims/:id/reject", need(caps.ClaimsReview), h.handleReject)
@@ -65,6 +66,31 @@ func (h *ClaimsHandler) handleList(ctx *gin.Context) {
 		return
 	}
 	loggers.SuccessResponse(ctx, page)
+}
+
+// handleExport: GET /admin/account-claims/export?status=&q=&month=&year= - the
+// matching claims (every one, not a page) as an Excel file download. status is
+// all, pending, approved or rejected.
+func (h *ClaimsHandler) handleExport(ctx *gin.Context) {
+	q := models.ClaimListQuery{
+		Status: ctx.DefaultQuery("status", cc.FILTER_ALL),
+		Search: ctx.Query("q"),
+	}
+	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
+	if !ok || !utils.IsTabFilter(models.Statuses, q.Status) {
+		loggers.GetCommonError(ctx, cc.INVALID_CLAIM_FILTER, http.StatusBadRequest)
+		return
+	}
+	q.From, q.To = from, to
+
+	file, name, err := h.claimsService.Export(ctx, q)
+	if err != nil {
+		writeClaimError(ctx, err)
+		return
+	}
+	ctx.Header("Content-Disposition", `attachment; filename="`+name+`"`)
+	ctx.Header("Cache-Control", "no-store")
+	ctx.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file)
 }
 
 // handleGet: GET /admin/account-claims/:id

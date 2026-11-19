@@ -153,8 +153,9 @@ func (h *VotersHandler) handleSave(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, s)
 }
 
-// handleSetVoting: PUT /admin/voters/:accountId/voting {voting} - puts the
-// member on the master list as voting or non-voting.
+// handleSetVoting: PUT /admin/voters/:accountId/voting {category, reasons}
+// (or {voting}) - puts the member on the master list as voting, non-voting
+// or ineligible (with at least one reason).
 func (h *VotersHandler) handleSetVoting(ctx *gin.Context) {
 	actor, ok := middlewares.ActorFromContext(ctx)
 	if !ok {
@@ -164,7 +165,7 @@ func (h *VotersHandler) handleSetVoting(ctx *gin.Context) {
 	if !utils.ValidatePayload(ctx, &req) {
 		return
 	}
-	s, err := h.votersService.SetVoting(ctx, ctx.Param("accountId"), *req.Voting, actor)
+	s, err := h.votersService.SetVoting(ctx, ctx.Param("accountId"), req, actor)
 	if err != nil {
 		writeVoterError(ctx, err)
 		return

@@ -24,7 +24,9 @@ type VotersRepositoryInterface interface {
 	GetElectionControl(ctx context.Context) (*models.ElectionControl, error)
 	SetElectionControl(ctx context.Context, enabled bool, byID int64, by string, audit *audit_models.AuditLog) error
 	// Puts one live portal account on the master list as voting or non-voting.
-	SetVoting(ctx context.Context, userID int64, voting bool, audit *audit_models.AuditLog) error
+	// Puts the account on the master list with category (and an ineligible
+	// member's reasons), adding it if it isn't listed.
+	SetVoting(ctx context.Context, userID int64, category string, reasons []string, audit *audit_models.AuditLog) error
 	// Records (or removes) one member's election token claim for year in
 	// fairchild_be's voter_token_claims.
 	SetTokenClaim(ctx context.Context, userID int64, year int, claimed bool, audit *audit_models.AuditLog) error

@@ -32,8 +32,8 @@ func NewVotersService(
 	return &VotersService{repo: repo, passwords: passwords, branches: branches}
 }
 
-// Stats counts voting and non-voting members per ledger branch, matched the
-// same way as the Portal page. Members on no ledger count under NoBranch.
+// Stats counts voting, non-voting, ineligible and left-out (not on the master
+// list) members per ledger branch, matched the same way as the Portal page. Members on no ledger count under NoBranch.
 func (s *VotersService) Stats(ctx context.Context) (*models.VoterStats, error) {
 	statuses, err := s.repo.VoterStatuses(ctx)
 	if err != nil {
@@ -44,19 +44,29 @@ func (s *VotersService) Stats(ctx context.Context) (*models.VoterStats, error) {
 		return nil, err
 	}
 
-	stats := &models.VoterStats{Voting: map[string]int{}, NonVoting: map[string]int{}}
+	stats := &models.VoterStats{
+		Voting: map[string]int{}, NonVoting: map[string]int{},
+		Ineligible: map[string]int{}, LeftOut: map[string]int{},
+	}
 	for _, b := range slices.Concat(member_models.Branches, []string{models.NoBranch}) {
-		stats.Voting[b], stats.NonVoting[b] = 0, 0
+		stats.Voting[b], stats.NonVoting[b], stats.Ineligible[b], stats.LeftOut[b] = 0, 0, 0, 0
 	}
 	for _, v := range statuses {
 		branch, ok := branchOf(v.MemberNo, v.ClientID)
 		if !ok {
 			branch = models.NoBranch
 		}
-		if v.CanVote {
+		switch {
+		case v.CanVote:
 			stats.Voting[branch]++
 			stats.TotalVoting++
-		} else {
+		case !v.OnList:
+			stats.LeftOut[branch]++
+			stats.TotalLeftOut++
+		case v.Category == models.CategoryIneligible:
+			stats.Ineligible[branch]++
+			stats.TotalIneligible++
+		default:
 			stats.NonVoting[branch]++
 			stats.TotalNonVoting++
 		}
@@ -118,10 +128,11 @@ func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, fi
 		return nil, invalid("The file is too large (up to %d MB)", models.MaxMasterListBytes>>20)
 	}
 
-	rows, badCategory, blank, err := parseMasterList(fileName, data)
+	list, err := parseMasterList(fileName, data)
 	if err != nil {
 		return nil, err
 	}
+	rows, badCategory := list.rows, list.badCategory
 	accounts, err := s.repo.LoadAccounts(ctx)
 	if err != nil {
 		return nil, err
@@ -134,14 +145,21 @@ func (s *VotersService) CheckMasterList(ctx context.Context, fileName string, fi
 
 	check := &models.MasterListCheck{
 		FileName: filepath.Base(fileName), Rows: len(rows) + len(badCategory), Members: members, NotFound: notFound,
-		Duplicates: duplicates, Conflicts: conflicts,
-		InvalidCategory: append([]models.MasterListRow{}, badCategory...), Blank: blank, CurrentCount: summary.Count,
+		Duplicates: append(list.duplicates, duplicates...), Conflicts: append(list.conflicts, conflicts...),
+		InvalidCategory: append([]models.MasterListRow{}, badCategory...), Blank: list.blank, CurrentCount: summary.Count,
+		Sheets: list.sheets,
 	}
 	for _, m := range members {
-		if m.Voting {
+		switch m.Category {
+		case models.CategoryVoting:
 			check.VotingCount++
-		} else {
+		case models.CategoryIneligible:
+			check.IneligibleCount++
+		default:
 			check.NonVotingCount++
+		}
+		if m.Delinquent {
+			check.DelinquentCount++
 		}
 	}
 	return check, nil
@@ -167,11 +185,12 @@ func (s *VotersService) SaveMasterList(ctx context.Context, req *models.SaveMast
 		if r.Category == "" {
 			continue
 		}
-		category, ok := parseCategory(r.Category)
+		category, delinquent, ok := parseCategory(r.Category)
 		if !ok {
 			return nil, invalid("Member %s has an unknown category %q", r.MemberNo, r.Category)
 		}
 		req.Members[i].Category = category
+		req.Members[i].Delinquent = r.Delinquent || delinquent
 	}
 	accounts, err := s.repo.LoadAccounts(ctx)
 	if err != nil {
@@ -193,10 +212,11 @@ func (s *VotersService) SaveMasterList(ctx context.Context, req *models.SaveMast
 	return s.repo.Summary(ctx)
 }
 
-// SetVoting switches one member between voting and non-voting on the master
-// list, adding them to it if they aren't listed. Only while the election is
-// on, like uploading; the next upload replaces it.
-func (s *VotersService) SetVoting(ctx context.Context, rawID string, voting bool, actor audit_models.Actor) (*models.MasterListSummary, error) {
+// SetVoting puts one member on the master list as voting, non-voting or
+// ineligible (with the reasons why, at least one), adding them to it if they
+// aren't listed. Only while the election is on, like uploading; the next
+// upload replaces it.
+func (s *VotersService) SetVoting(ctx context.Context, rawID string, req models.SetVotingRequest, actor audit_models.Actor) (*models.MasterListSummary, error) {
 	if err := s.requireElectionOn(ctx); err != nil {
 		return nil, err
 	}
@@ -204,11 +224,28 @@ func (s *VotersService) SetVoting(ctx context.Context, rawID string, voting bool
 	if !ok {
 		return nil, cc.ErrPortalMemberNotFound
 	}
-	action := cc.AUDIT_SET_MEMBER_NON_VOTING
-	if voting {
-		action = cc.AUDIT_SET_MEMBER_VOTING
+	category := req.Category
+	if category == "" {
+		if req.Voting == nil {
+			return nil, invalid("Choose voting, non-voting or ineligible")
+		}
+		category = models.CategoryNonVoting
+		if *req.Voting {
+			category = models.CategoryVoting
+		}
 	}
-	if err := s.repo.SetVoting(ctx, id, voting, actor.Log(action, "")); err != nil {
+	var reasons []string
+	action := map[string]string{
+		models.CategoryVoting:     cc.AUDIT_SET_MEMBER_VOTING,
+		models.CategoryNonVoting:  cc.AUDIT_SET_MEMBER_NON_VOTING,
+		models.CategoryIneligible: cc.AUDIT_SET_MEMBER_INELIGIBLE,
+	}[category]
+	if category == models.CategoryIneligible {
+		if reasons = addReasons(nil, req.Reasons...); len(reasons) == 0 {
+			return nil, invalid("Give at least one reason why this member is ineligible")
+		}
+	}
+	if err := s.repo.SetVoting(ctx, id, category, reasons, actor.Log(action, "")); err != nil {
 		return nil, err
 	}
 	return s.repo.Summary(ctx)

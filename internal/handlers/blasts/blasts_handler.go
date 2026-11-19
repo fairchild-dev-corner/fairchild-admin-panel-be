@@ -46,10 +46,14 @@ func (h *BlastsHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	need := middlewares.RequireCapability
 	admin.GET("/blasts", need(caps.BlastsView), h.handleList)
 	admin.GET("/blasts/:id", need(caps.BlastsView), h.handleGet)
+	admin.GET("/blasts/:id/recipients", need(caps.BlastsView), h.handleRecipients)
+	admin.GET("/blasts/members", need(caps.BlastsSend), h.handleSearchMembers)
 	admin.POST("/blasts/preview", need(caps.BlastsSend), h.handlePreview)
 	admin.POST("/blasts/test", need(caps.BlastsSend), h.handleTest)
 	admin.POST("/blasts", need(caps.BlastsSend), h.handleCreate)
 	admin.PUT("/blasts/:id/cancel", need(caps.BlastsSend), h.handleCancel)
+	admin.DELETE("/blasts/:id", need(caps.BlastsSend), h.handleDelete)
+	admin.DELETE("/blasts", need(caps.BlastsSend), h.handleDeleteAll)
 	composeLimit := middlewares.NewIPRateLimiter(rate.Every(composeRateLimitRefill), composeRateLimitBurst)
 	admin.POST("/blasts/compose", need(caps.BlastsSend), composeLimit.Middleware(), h.handleCompose)
 }
@@ -102,7 +106,32 @@ func (h *BlastsHandler) handleGet(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, b)
 }
 
-// handlePreview: POST /admin/blasts/preview {channel, statuses, branches}
+// handleRecipients: GET /admin/blasts/:id/recipients?status=&page=&pageSize=
+// - the blast's messages and how each went, for its progress list.
+func (h *BlastsHandler) handleRecipients(ctx *gin.Context) {
+	page := max(1, atoiOr(ctx.Query("page"), 1))
+	pageSize := min(max(1, atoiOr(ctx.Query("pageSize"), defaultPageSize)), maxPageSize)
+
+	result, err := h.blastsService.Recipients(ctx, ctx.Param("id"), ctx.Query("status"), page, pageSize)
+	if err != nil {
+		writeBlastError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, result)
+}
+
+// handleSearchMembers: GET /admin/blasts/members?q= - portal accounts to
+// pick as blast recipients by hand.
+func (h *BlastsHandler) handleSearchMembers(ctx *gin.Context) {
+	result, err := h.blastsService.SearchMembers(ctx, ctx.Query("q"))
+	if err != nil {
+		writeBlastError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, result)
+}
+
+// handlePreview: POST /admin/blasts/preview {channel, statuses, branches, groups, memberIds}
 func (h *BlastsHandler) handlePreview(ctx *gin.Context) {
 	var req models.AudienceRequest
 	if !utils.ValidatePayload(ctx, &req) {
@@ -134,7 +163,7 @@ func (h *BlastsHandler) handleTest(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, result)
 }
 
-// handleCreate: POST /admin/blasts {channel, statuses, branches, subject, emailBody, smsBody}
+// handleCreate: POST /admin/blasts {channel, statuses, branches, groups, memberIds, subject, emailBody, smsBody}
 func (h *BlastsHandler) handleCreate(ctx *gin.Context) {
 	actor, ok := middlewares.ActorFromContext(ctx)
 	if !ok {
@@ -166,11 +195,40 @@ func (h *BlastsHandler) handleCancel(ctx *gin.Context) {
 	loggers.SuccessResponse(ctx, b)
 }
 
+// handleDelete: DELETE /admin/blasts/:id - a finished or cancelled blast
+// and its message log.
+func (h *BlastsHandler) handleDelete(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	if err := h.blastsService.Delete(ctx, ctx.Param("id"), actor); err != nil {
+		writeBlastError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, models.DeleteResult{Deleted: 1})
+}
+
+// handleDeleteAll: DELETE /admin/blasts - every blast that isn't still
+// sending.
+func (h *BlastsHandler) handleDeleteAll(ctx *gin.Context) {
+	actor, ok := middlewares.ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	result, err := h.blastsService.DeleteFinished(ctx, actor)
+	if err != nil {
+		writeBlastError(ctx, err)
+		return
+	}
+	loggers.SuccessResponse(ctx, result)
+}
+
 func writeBlastError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, cc.ErrBlastNotFound):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusNotFound)
-	case errors.Is(err, cc.ErrBlastNotSending):
+	case errors.Is(err, cc.ErrBlastNotSending), errors.Is(err, cc.ErrBlastStillSending):
 		loggers.GetCommonError(ctx, err.Error(), http.StatusConflict)
 	case errors.Is(err, cc.ErrBlastInvalid),
 		errors.Is(err, cc.ErrBlastNoRecipients),

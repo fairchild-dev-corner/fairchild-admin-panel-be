@@ -102,8 +102,28 @@ func (s *BlastsService) checkAudience(req *models.AudienceRequest) error {
 	}
 	req.Statuses = dedupe(req.Statuses)
 	req.Branches = dedupe(req.Branches)
+	req.Groups = dedupe(req.Groups)
+	req.MemberIDs = dedupe(req.MemberIDs)
+	if len(req.MemberIDs) > 0 {
+		// Picked by hand: the filters don't apply.
+		if len(req.MemberIDs) > models.MaxPickedMembers {
+			return invalid(fmt.Sprintf("Pick up to %d members", models.MaxPickedMembers))
+		}
+		for _, id := range req.MemberIDs {
+			if _, ok := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, id); !ok {
+				return invalid("Unknown member " + id)
+			}
+		}
+		req.Statuses, req.Branches, req.Groups = []string{}, []string{}, []string{}
+		return nil
+	}
 	if len(req.Statuses) == 0 {
 		return invalid("Pick at least one account status")
+	}
+	for _, g := range req.Groups {
+		if !slices.Contains(models.Groups, g) {
+			return invalid("Group must be one of: voting, non_voting, ineligible, delinquent")
+		}
 	}
 	for _, st := range req.Statuses {
 		if !slices.Contains(portal_models.Statuses, st) {
@@ -151,33 +171,61 @@ func checkContent(channel string, subject, emailBody, smsBody *string) error {
 	return nil
 }
 
-// audience returns the members matching the filters, plus how many match
-// each branch (before the branch filter, for the picker).
-func (s *BlastsService) audience(ctx context.Context, req models.AudienceRequest) ([]models.AudienceMember, map[string]int, error) {
-	all, err := s.repo.ListAudience(ctx, req.Statuses)
+// audience returns the members matching the request, plus how many match
+// each branch (before the branch filter, for the picker) and each master
+// list group (after the status and branch filters, before the group one).
+// Picked members are taken as they are.
+func (s *BlastsService) audience(ctx context.Context, req models.AudienceRequest) ([]models.AudienceMember, map[string]int, map[string]int, error) {
+	var all []models.AudienceMember
+	var err error
+	if len(req.MemberIDs) > 0 {
+		ids := make([]int64, 0, len(req.MemberIDs))
+		for _, raw := range req.MemberIDs {
+			if id, ok := app_models.ParseID(cc.PORTAL_MEMBER_ID_PREFIX, raw); ok {
+				ids = append(ids, id)
+			}
+		}
+		all, err = s.repo.ListAudienceByIDs(ctx, ids)
+	} else {
+		all, err = s.repo.ListAudience(ctx, req.Statuses)
+	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	branchOf, err := s.branches.BranchResolver(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	counts := make(map[string]int, len(member_models.Branches))
+	branchCounts := make(map[string]int, len(member_models.Branches))
 	for _, b := range member_models.Branches {
-		counts[b] = 0
+		branchCounts[b] = 0
+	}
+	groupCounts := make(map[string]int, len(models.Groups))
+	for _, g := range models.Groups {
+		groupCounts[g] = 0
 	}
 	members := all[:0:0]
 	for _, m := range all {
 		branch, onLedger := branchOf(m.MemberNo, m.ClientID)
 		if onLedger {
-			counts[branch]++
+			branchCounts[branch]++
 		}
-		if len(req.Branches) == 0 || (onLedger && slices.Contains(req.Branches, branch)) {
+		if len(req.Branches) > 0 && (!onLedger || !slices.Contains(req.Branches, branch)) {
+			continue
+		}
+		inGroup := len(req.Groups) == 0
+		for _, g := range models.Groups {
+			if m.InGroup(g) {
+				groupCounts[g]++
+				inGroup = inGroup || slices.Contains(req.Groups, g)
+			}
+		}
+		if inGroup {
 			members = append(members, m)
 		}
 	}
-	return members, counts, nil
+	return members, branchCounts, groupCounts, nil
 }
 
 // recipients turns members into one message per member per channel. An
@@ -221,14 +269,15 @@ func (s *BlastsService) Preview(ctx context.Context, req models.AudienceRequest)
 	if err := s.checkAudience(&req); err != nil {
 		return nil, err
 	}
-	members, branchCounts, err := s.audience(ctx, req)
+	members, branchCounts, groupCounts, err := s.audience(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	recipients, noContact := s.recipients(members, req.Channel)
 
 	p := &models.AudiencePreview{
-		Members: len(members), NoContact: noContact, BranchCounts: branchCounts, TestMode: s.conf.TestMode,
+		Members: len(members), NoContact: noContact, BranchCounts: branchCounts, GroupCounts: groupCounts,
+		TestMode: s.conf.TestMode,
 	}
 	for _, r := range recipients {
 		if r.Channel == models.ChannelEmail {
@@ -251,7 +300,7 @@ func (s *BlastsService) Create(ctx context.Context, req *models.CreateBlastReque
 	if err := checkContent(req.Channel, &req.Subject, &req.EmailBody, &req.SMSBody); err != nil {
 		return nil, err
 	}
-	members, _, err := s.audience(ctx, req.AudienceRequest)
+	members, _, _, err := s.audience(ctx, req.AudienceRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +311,9 @@ func (s *BlastsService) Create(ctx context.Context, req *models.CreateBlastReque
 
 	blast := &models.Blast{
 		Channel: req.Channel, Subject: req.Subject, EmailBody: req.EmailBody, SMSBody: req.SMSBody,
-		Audience: models.BlastAudience{Statuses: req.Statuses, Branches: req.Branches},
+		Audience: models.BlastAudience{
+			Statuses: req.Statuses, Branches: req.Branches, Groups: req.Groups, Picked: len(req.MemberIDs),
+		},
 		TestMode: s.conf.TestMode, CreatedBy: actor.Name,
 	}
 	id, err := s.repo.Create(ctx, blast, actor.UserPanelID, recipients, actor.Log(cc.AUDIT_STARTED_BLAST, ""))
@@ -319,6 +370,21 @@ func (s *BlastsService) Cancel(ctx context.Context, rawID string, actor audit_mo
 		return nil, err
 	}
 	return s.get(ctx, id)
+}
+
+// Delete removes a finished or cancelled blast and its message log.
+func (s *BlastsService) Delete(ctx context.Context, rawID string, actor audit_models.Actor) error {
+	id, ok := app_models.ParseID(cc.MESSAGE_BLAST_ID_PREFIX, rawID)
+	if !ok {
+		return cc.ErrBlastNotFound
+	}
+	return s.repo.Delete(ctx, id, actor.Log(cc.AUDIT_DELETED_BLAST, ""))
+}
+
+// DeleteFinished removes every blast that isn't still sending.
+func (s *BlastsService) DeleteFinished(ctx context.Context, actor audit_models.Actor) (models.DeleteResult, error) {
+	n, err := s.repo.DeleteFinished(ctx, actor.Log(cc.AUDIT_DELETED_ALL_BLASTS, ""))
+	return models.DeleteResult{Deleted: n}, err
 }
 
 // SendTest sends the draft once to the addresses the admin typed, with
@@ -468,4 +534,58 @@ func (s *BlastsService) sendQueued(ctx context.Context, job models.BlastJob, m m
 		return fmt.Errorf("%s isn't set up on the server", m.Channel)
 	}
 	return s.send(ctx, job, m.Channel, m.Recipient, m.Name)
+}
+
+// searchLimit caps GET /admin/blasts/members results.
+const searchLimit = 20
+
+// SearchMembers finds portal accounts to pick as blast recipients by hand.
+// Searches shorter than 2 characters return nothing.
+func (s *BlastsService) SearchMembers(ctx context.Context, search string) ([]models.AudienceCandidate, error) {
+	search = strings.TrimSpace(search)
+	out := []models.AudienceCandidate{}
+	if utf8.RuneCountInString(search) < 2 {
+		return out, nil
+	}
+	if len(search) > 100 {
+		search = search[:100]
+	}
+	members, err := s.repo.SearchAudience(ctx, search, searchLimit)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		email, emailOK := normaliseAddress(m.Email)
+		mobile, mobileOK := normaliseAddress(m.Mobile)
+		out = append(out, models.AudienceCandidate{
+			ID: app_models.FormatID(cc.PORTAL_MEMBER_ID_PREFIX, m.UserID), MemberNo: m.MemberNo, Name: m.Name,
+			Status: m.Status, Category: m.Category, Delinquent: m.Delinquent,
+			HasEmail:  m.Email != "" && emailOK && strings.Contains(email, "@"),
+			HasMobile: m.Mobile != "" && mobileOK && !strings.Contains(mobile, "@"),
+		})
+	}
+	return out, nil
+}
+
+// Recipients lists one page of a blast's messages for its progress list.
+func (s *BlastsService) Recipients(ctx context.Context, rawID, status string, page, pageSize int) (*models.RecipientPage, error) {
+	id, ok := app_models.ParseID(cc.MESSAGE_BLAST_ID_PREFIX, rawID)
+	if !ok {
+		return nil, cc.ErrBlastNotFound
+	}
+	if status != "" && !slices.Contains(models.RecipientStatuses, status) {
+		return nil, invalid("Status must be pending, sent, failed or skipped")
+	}
+	b, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if b == nil {
+		return nil, cc.ErrBlastNotFound
+	}
+	items, total, err := s.repo.Recipients(ctx, id, status, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	return &models.RecipientPage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }

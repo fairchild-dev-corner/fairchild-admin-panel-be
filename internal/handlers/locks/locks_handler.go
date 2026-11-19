@@ -34,7 +34,34 @@ func NewHandler(locksService *service.LocksService) *LocksHandler {
 func (h *LocksHandler) RegisterRoutes(admin *gin.RouterGroup) {
 	need := middlewares.RequireCapability
 	admin.GET("/locked-accounts", need(caps.LocksView), h.handleList)
+	admin.GET("/locked-accounts/export", need(caps.LocksView), h.handleExport)
 	admin.PUT("/locked-accounts/:id/unlock", need(caps.LocksUnlock), h.handleUnlock)
+}
+
+// handleExport: GET /admin/locked-accounts/export?status=&q=&month=&year= - the
+// matching locks (every one, not a page) as an Excel file download. status is
+// all, locked or unlocked; the date range is as in the list (the last three
+// months without a month or year).
+func (h *LocksHandler) handleExport(ctx *gin.Context) {
+	q := models.LockedAccountListQuery{
+		Status: ctx.DefaultQuery("status", cc.FILTER_ALL),
+		Search: ctx.Query("q"),
+	}
+	from, to, ok := utils.ParsePeriod(ctx.Query("month"), ctx.Query("year"))
+	if !ok || !utils.IsTabFilter(models.Statuses, q.Status) {
+		loggers.GetCommonError(ctx, cc.INVALID_LOCK_FILTER, http.StatusBadRequest)
+		return
+	}
+	q.From, q.To = from, to
+
+	file, name, err := h.locksService.Export(ctx, q)
+	if err != nil {
+		writeLockError(ctx, err)
+		return
+	}
+	ctx.Header("Content-Disposition", `attachment; filename="`+name+`"`)
+	ctx.Header("Cache-Control", "no-store")
+	ctx.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file)
 }
 
 // handleList: GET /admin/locked-accounts?status=&q=&month=&year=&page=&pageSize=

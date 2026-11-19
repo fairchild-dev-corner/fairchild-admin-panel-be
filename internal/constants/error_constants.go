@@ -48,6 +48,7 @@ const (
 	INVALID_LOCK_FILTER      = "status must be locked, unlocked or all; month is YYYY-MM and year is YYYY, not both"
 	BLAST_NOT_FOUND          = "Blast not found"
 	BLAST_NOT_SENDING        = "This blast has already finished or been cancelled"
+	BLAST_STILL_SENDING      = "This blast is still sending. Cancel it before deleting it"
 	BLAST_NO_RECIPIENTS      = "No members match this audience with an email or mobile number for the chosen channel"
 	BLAST_EMAIL_UNAVAILABLE  = "Email isn't set up on the server, so it can't send email blasts"
 	BLAST_SMS_UNAVAILABLE    = "Texting isn't set up on the server, so it can't send SMS blasts"
@@ -233,6 +234,9 @@ var ErrBlastNotFound = errors.New(BLAST_NOT_FOUND)
 
 // ErrBlastNotSending: only a blast that's still sending can be cancelled.
 var ErrBlastNotSending = errors.New(BLAST_NOT_SENDING)
+
+// ErrBlastStillSending: a blast must finish or be cancelled before it's deleted.
+var ErrBlastStillSending = errors.New(BLAST_STILL_SENDING)
 
 // ErrBlastNoRecipients: the audience has nobody reachable on the channel.
 var ErrBlastNoRecipients = errors.New(BLAST_NO_RECIPIENTS)
